@@ -27,6 +27,12 @@ if(ADIOS2_SST_HAVE_LIBFABRIC)
   endif()
 endif()
 
+if(ADIOS2_SST_HAVE_UCX)
+  target_sources(sst PRIVATE dp/ucx_dp.c)
+  target_link_libraries(sst PRIVATE ucx::ucx)
+  set(CMAKE_REQUIRED_INCLUDES ${UCX_INCLUDE_DIRS})
+endif()
+
 if(ADIOS2_HAVE_DAOS)
   target_sources(sst PRIVATE dp/daos_dp.c)
   target_link_libraries(sst PRIVATE DAOS::DAOS)
