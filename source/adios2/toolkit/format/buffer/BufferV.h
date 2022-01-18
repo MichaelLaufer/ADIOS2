@@ -41,7 +41,8 @@ public:
     virtual void Reset();
 
     virtual size_t AddToVec(const size_t size, const void *buf, size_t align,
-                            bool CopyReqd) = 0;
+                            bool CopyReqd,
+                            MemorySpace MemSpace = MemorySpace::Host) = 0;
 
     struct BufferPos
     {
@@ -59,6 +60,8 @@ public:
      * during execution (even after reallocs)
      */
     virtual BufferPos Allocate(const size_t size, size_t align) = 0;
+    virtual void DownsizeLastAlloc(const size_t oldSize,
+                                   const size_t newSize) = 0;
 
     void AlignBuffer(const size_t align);
 

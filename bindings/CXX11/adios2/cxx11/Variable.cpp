@@ -168,22 +168,32 @@ namespace adios2
             throw std::invalid_argument("ERROR: invalid operator, in call to " \
                                         "Variable<T>::AddOperator");           \
         }                                                                      \
-        return m_Variable->AddOperation(*op.m_Operator, parameters);           \
+        auto params = op.Parameters();                                         \
+        for (const auto &p : parameters)                                       \
+        {                                                                      \
+            params[p.first] = p.second;                                        \
+        }                                                                      \
+        return m_Variable->AddOperation(op.m_Type, params);                    \
     }                                                                          \
                                                                                \
     template <>                                                                \
-    std::vector<typename Variable<T>::Operation> Variable<T>::Operations()     \
-        const                                                                  \
+    size_t Variable<T>::AddOperation(const std::string &type,                  \
+                                     const Params &parameters)                 \
+    {                                                                          \
+        return m_Variable->AddOperation(type, parameters);                     \
+    }                                                                          \
+                                                                               \
+    template <>                                                                \
+    std::vector<Operator> Variable<T>::Operations() const                      \
     {                                                                          \
         helper::CheckForNullptr(m_Variable,                                    \
                                 "in call to Variable<T>::Operations");         \
-        std::vector<Operation> operations;                                     \
+        std::vector<Operator> operations;                                      \
         operations.reserve(m_Variable->m_Operations.size());                   \
-                                                                               \
         for (const auto &op : m_Variable->m_Operations)                        \
         {                                                                      \
             operations.push_back(                                              \
-                Operation{Operator(op.Op), op.Parameters, op.Info});           \
+                Operator(op->m_TypeString, &op->GetParameters()));             \
         }                                                                      \
         return operations;                                                     \
     }                                                                          \

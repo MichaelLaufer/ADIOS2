@@ -32,7 +32,6 @@ BP3Writer::BP3Writer(IO &io, const std::string &name, const Mode mode,
 {
     PERFSTUBS_SCOPED_TIMER("BP3Writer::Open");
     m_IO.m_ReadStreaming = false;
-    m_EndMessage = " in call to IO Open BPFileWriter " + m_Name + "\n";
     Init();
 }
 
@@ -197,11 +196,11 @@ void BP3Writer::InitTransports()
 
     if (m_BP3Serializer.m_Aggregator.m_IsAggregator)
     {
-        if (m_BP3Serializer.m_Parameters.AsyncTasks)
+        if (m_BP3Serializer.m_Parameters.AsyncOpen)
         {
             for (size_t i = 0; i < m_IO.m_TransportsParameters.size(); ++i)
             {
-                m_IO.m_TransportsParameters[i]["asynctasks"] = "true";
+                m_IO.m_TransportsParameters[i]["asyncopen"] = "true";
             }
         }
         m_FileDataManager.OpenFiles(bpSubStreamNames, m_OpenMode,

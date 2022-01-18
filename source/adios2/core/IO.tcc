@@ -59,10 +59,9 @@ Variable<T> &IO::DefineVariable(const std::string &name, const Dims &shape,
     if (itOperations != m_VarOpsPlaceholder.end())
     {
         variable.m_Operations.reserve(itOperations->second.size());
-
         for (auto &operation : itOperations->second)
         {
-            variable.AddOperation(*operation.Op, operation.Parameters);
+            variable.AddOperation(operation.first, operation.second);
         }
     }
 
@@ -75,6 +74,13 @@ Variable<T> *IO::InquireVariable(const std::string &name) noexcept
     PERFSTUBS_SCOPED_TIMER("IO::InquireVariable");
     auto itVariable = m_Variables.find(name);
 
+    if (m_Variables.empty())
+    {
+        for (auto &e : m_Engines)
+        {
+            e.second->NotifyEngineNoVarsQuery();
+        }
+    }
     if (itVariable == m_Variables.end())
     {
         return nullptr;

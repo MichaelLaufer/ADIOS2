@@ -19,6 +19,7 @@
 
 #include "adios2/common/ADIOSTypes.h"
 #include "adios2/core/IO.h"
+#include "adios2/helper/adiosLog.h"
 #include "adios2/helper/adiosString.h"
 #include "adios2/helper/adiosXMLUtil.h"
 
@@ -32,7 +33,7 @@ namespace helper
 void ParseConfigXML(
     core::ADIOS &adios, const std::string &configFileXML,
     std::map<std::string, core::IO> &ios,
-    std::map<std::string, std::shared_ptr<core::Operator>> &operators)
+    std::unordered_map<std::string, std::pair<std::string, Params>> &operators)
 {
     const std::string hint("for config file " + configFileXML +
                            " in call to ADIOS constructor");
@@ -44,8 +45,8 @@ void ParseConfigXML(
 
         if (fileContents.empty())
         {
-            throw std::invalid_argument("ERROR: config xml file is empty, " +
-                                        hint + "\n");
+            helper::Log("Helper", "AdiosXML", "ParseConfigXML",
+                        "empty config xml file", helper::EXCEPTION);
         }
         return fileContents;
     };
@@ -82,63 +83,58 @@ void ParseConfigXML(
 
             if (*opName && *opType)
             {
-                throw std::invalid_argument(
-                    "ERROR: operator (" + std::string(opName->value()) +
-                    ") and type (" + std::string(opType->value()) +
-                    ") attributes can't coexist in <operation> element "
-                    "inside <variable name=\"" +
-                    variableName + "\"> element, " + hint + "\n");
+                helper::Log(
+                    "Helper", "AdiosXML", "ParseConfigXML",
+                    "operator (" + std::string(opName->value()) +
+                        ") and type (" + std::string(opType->value()) +
+                        ") attributes can't coexist in <operation> element "
+                        "inside <variable name=\"" +
+                        variableName + "\"> element",
+                    helper::EXCEPTION);
             }
 
             if (!*opName && !*opType)
             {
-                throw std::invalid_argument(
-                    "ERROR: <operation> element "
-                    "inside <variable name=\"" +
-                    variableName +
-                    "\"> element requires either operator "
-                    "(existing) or type (supported) attribute, " +
-                    hint + "\n");
+                helper::Log("Helper", "AdiosXML", "ParseConfigXML",
+                            "<operation> element "
+                            "inside <variable name=\"" +
+                                variableName +
+                                "\"> element requires either operator "
+                                "(existing) or type (supported) attribute",
+                            helper::EXCEPTION);
             }
 
-            core::Operator *op = nullptr;
+            std::string type;
+            Params params;
 
             if (*opName)
             {
                 auto itOperator = operators.find(std::string(opName->value()));
                 if (itOperator == operators.end())
                 {
-                    throw std::invalid_argument(
-                        "ERROR: operator " + std::string(opName->value()) +
-                        " not previously defined, from variable " +
-                        variableName + " inside io " + currentIO.m_Name + ", " +
-                        hint + "\n");
+                    helper::Log("Helper", "AdiosXML", "ParseConfigXML",
+                                "operator " + std::string(opName->value()) +
+                                    " not previously defined, from variable " +
+                                    variableName + " inside io " +
+                                    currentIO.m_Name,
+                                helper::EXCEPTION);
                 }
-                op = itOperator->second.get();
+                type = itOperator->second.first;
+                params = itOperator->second.second;
             }
 
             if (*opType)
             {
-                std::string operatorType = std::string(opType->value());
-                std::transform(operatorType.begin(), operatorType.end(),
-                               operatorType.begin(), ::tolower);
-
-                const std::string operatorName =
-                    "__" + currentIO.m_Name + "_" + operatorType;
-                auto itOperator = operators.find(operatorName);
-
-                if (itOperator == operators.end())
-                {
-                    op = &adios.DefineOperator(operatorName, operatorType);
-                }
-                else
-                {
-                    op = itOperator->second.get();
-                }
+                type = std::string(opType->value());
             }
-            const Params parameters = helper::XMLGetParameters(operation, hint);
+
+            for (const auto &p : helper::XMLGetParameters(operation, hint))
+            {
+                params[p.first] = p.second;
+            }
+
             currentIO.m_VarOpsPlaceholder[variableName].push_back(
-                core::IO::Operation{op, parameters, Params()});
+                {type, params});
         }
     };
 

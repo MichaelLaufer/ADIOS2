@@ -83,7 +83,7 @@ public:
      */
     BufferV *ReinitStepData(BufferV *DataBuffer);
 
-    TimestepInfo CloseTimestep(int timestep);
+    TimestepInfo CloseTimestep(int timestep, bool forceCopyDeferred = false);
     void PerformPuts();
 
     core::Engine *m_Engine = NULL;
@@ -104,6 +104,13 @@ public:
     void *GetPtr(int bufferIdx, size_t posInBuffer);
     size_t CalcSize(const size_t Count, const size_t *Vals);
 
+    size_t DebugGetDataBufferSize() const;
+
+    int m_StatsLevel = 1;
+
+    /* Variables to help appending to existing file */
+    size_t m_PreMetaMetadataFileLength = 0;
+
 private:
     void Init();
     typedef struct _BP5WriterRec
@@ -113,8 +120,10 @@ private:
         ShapeID Shape;
         size_t DataOffset;
         size_t MetaOffset;
+        char *OperatorType = NULL;
         int DimCount;
         int Type;
+        size_t MinMaxOffset;
     } * BP5WriterRec;
 
     struct FFSWriterMarshalBase
@@ -167,11 +176,11 @@ private:
     void AddVarArrayField(FMFieldList *FieldP, int *CountP, const char *Name,
                           const DataType Type, int ElementSize,
                           char *SizeField);
-    char *ConcatName(const char *base_name, const char *postfix,
-                     ShapeID Shape = ShapeID::Unknown);
-    const char *NamePrefix(ShapeID Shape);
-    char *BuildVarName(const char *base_name, const int type,
-                       const int element_size);
+    void AddDoubleArrayField(FMFieldList *FieldP, int *CountP, const char *Name,
+                             const DataType Type, int ElementSize,
+                             char *SizeField);
+    char *BuildVarName(const char *base_name, const ShapeID Shape,
+                       const int type, const int element_size);
     void BreakdownVarName(const char *Name, char **base_name_p, int *type_p,
                           int *element_size_p);
     char *BuildArrayDimsName(const char *base_name, const int type,
@@ -185,7 +194,8 @@ private:
     size_t *AppendDims(size_t *OldDims, const size_t OldCount,
                        const size_t Count, const size_t *Vals);
 
-    void DumpDeferredBlocks();
+    void DumpDeferredBlocks(bool forceCopyDeferred = false);
+    void VariableStatsEnabled(void *Variable);
 
     typedef struct _ArrayRec
     {

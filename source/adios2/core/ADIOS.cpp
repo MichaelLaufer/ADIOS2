@@ -18,44 +18,10 @@
 #include "adios2/core/IO.h"
 #include "adios2/helper/adiosCommDummy.h"
 #include "adios2/helper/adiosFunctions.h" //InquireKey, BroadcastFile
+#include "adios2/operator/OperatorFactory.h"
 #include <adios2sys/SystemTools.hxx>
 
 #include <adios2-perfstubs-interface.h>
-
-// OPERATORS
-
-// compress
-#ifdef ADIOS2_HAVE_BZIP2
-#include "adios2/operator/compress/CompressBZIP2.h"
-#endif
-
-#ifdef ADIOS2_HAVE_ZFP
-#include "adios2/operator/compress/CompressZFP.h"
-#endif
-
-#ifdef ADIOS2_HAVE_SZ
-#include "adios2/operator/compress/CompressSZ.h"
-#endif
-
-#ifdef ADIOS2_HAVE_MGARD
-#include "adios2/operator/compress/CompressMGARD.h"
-#endif
-
-#ifdef ADIOS2_HAVE_BZIP2
-#include "adios2/operator/compress/CompressBZIP2.h"
-#endif
-
-#ifdef ADIOS2_HAVE_PNG
-#include "adios2/operator/compress/CompressPNG.h"
-#endif
-
-#ifdef ADIOS2_HAVE_BLOSC
-#include "adios2/operator/compress/CompressBlosc.h"
-#endif
-
-#ifdef ADIOS2_HAVE_LIBPRESSIO
-#include "adios2/operator/compress/CompressLibPressio.h"
-#endif
 
 // callbacks
 #include "adios2/operator/callback/Signature1.h"
@@ -185,150 +151,49 @@ void ADIOS::FlushAll()
     }
 }
 
-Operator &ADIOS::DefineOperator(const std::string &name, const std::string type,
-                                const Params &parameters)
+void ADIOS::EnterComputationBlock() noexcept
 {
-    auto lf_ErrorMessage = [](const std::string type) -> std::string {
-        return "ERROR: this version of ADIOS2 didn't compile with the " + type +
-               " library, when parsing config file in ADIOS constructor or in "
-               "call to ADIOS::DefineOperator";
-    };
-
-    std::shared_ptr<Operator> operatorPtr;
-
-    CheckOperator(name);
-    const std::string typeLowerCase = helper::LowerCase(type);
-
-    if (typeLowerCase == "bzip2")
+    enteredComputationBlock = true;
+    for (auto &ioPair : m_IOs)
     {
-#ifdef ADIOS2_HAVE_BZIP2
-        auto itPair = m_Operators.emplace(
-            name, std::make_shared<compress::CompressBZIP2>(parameters));
-        operatorPtr = itPair.first->second;
-#else
-        throw std::invalid_argument(lf_ErrorMessage("BZip2"));
-#endif
+        ioPair.second.EnterComputationBlock();
     }
-    else if (typeLowerCase == "zfp")
-    {
-#ifdef ADIOS2_HAVE_ZFP
-        auto itPair = m_Operators.emplace(
-            name, std::make_shared<compress::CompressZFP>(parameters));
-        operatorPtr = itPair.first->second;
-#else
-        throw std::invalid_argument(lf_ErrorMessage("ZFP"));
-#endif
-    }
-    else if (typeLowerCase == "sz")
-    {
-#ifdef ADIOS2_HAVE_SZ
-        auto itPair = m_Operators.emplace(
-            name, std::make_shared<compress::CompressSZ>(parameters));
-        operatorPtr = itPair.first->second;
-#else
-        throw std::invalid_argument(lf_ErrorMessage("SZ"));
-#endif
-    }
-    else if (typeLowerCase == "mgard")
-    {
-#ifdef ADIOS2_HAVE_MGARD
-        auto itPair = m_Operators.emplace(
-            name, std::make_shared<compress::CompressMGARD>(parameters));
-        operatorPtr = itPair.first->second;
-#else
-        throw std::invalid_argument(lf_ErrorMessage("MGARD"));
-#endif
-    }
-    else if (typeLowerCase == "png")
-    {
-#ifdef ADIOS2_HAVE_PNG
-        auto itPair = m_Operators.emplace(
-            name, std::make_shared<compress::CompressPNG>(parameters));
-        operatorPtr = itPair.first->second;
-#else
-        throw std::invalid_argument(lf_ErrorMessage("PNG"));
-#endif
-    }
-    else if (typeLowerCase == "blosc")
-    {
-#ifdef ADIOS2_HAVE_BLOSC
-        auto itPair = m_Operators.emplace(
-            name, std::make_shared<compress::CompressBlosc>(parameters));
-        operatorPtr = itPair.first->second;
-#else
-        throw std::invalid_argument(lf_ErrorMessage("Blosc"));
-#endif
-    }
-    else if (typeLowerCase == "libpressio")
-    {
-#ifdef ADIOS2_HAVE_LIBPRESSIO
-        auto itPair = m_Operators.emplace(
-            name, std::make_shared<compress::CompressLibPressio>(parameters));
-        operatorPtr = itPair.first->second;
-#else
-        throw std::invalid_argument(lf_ErrorMessage("LibPressio"));
-#endif
-    }
-    else
-    {
-        throw std::invalid_argument(
-            "ERROR: Operator " + name + " of type " + type +
-            " is not supported by ADIOS2, in call to DefineOperator\n");
-    }
-
-    if (!operatorPtr)
-    {
-        throw std::invalid_argument(
-            "ERROR: Operator " + name + " of type " + type +
-            " couldn't be defined, in call to DefineOperator\n");
-    }
-
-    return *operatorPtr.get();
 }
 
-Operator *ADIOS::InquireOperator(const std::string &name) noexcept
+void ADIOS::ExitComputationBlock() noexcept
 {
-    std::shared_ptr<Operator> *op = helper::InquireKey(name, m_Operators);
-    if (op == nullptr)
+    if (enteredComputationBlock)
+    {
+        enteredComputationBlock = false;
+        for (auto &ioPair : m_IOs)
+        {
+            ioPair.second.ExitComputationBlock();
+        }
+    }
+}
+
+std::pair<std::string, Params> &ADIOS::DefineOperator(const std::string &name,
+                                                      const std::string type,
+                                                      const Params &parameters)
+{
+    CheckOperator(name);
+    MakeOperator(type, parameters);
+    m_Operators[name] = {type, parameters};
+    return m_Operators[name];
+}
+
+std::pair<std::string, Params> *
+ADIOS::InquireOperator(const std::string &name) noexcept
+{
+    auto it = m_Operators.find(name);
+    if (it == m_Operators.end())
     {
         return nullptr;
     }
-    return op->get();
-}
-
-#define declare_type(T)                                                        \
-    Operator &ADIOS::DefineCallBack(                                           \
-        const std::string name,                                                \
-        const std::function<void(const T *, const std::string &,               \
-                                 const std::string &, const std::string &,     \
-                                 const size_t, const Dims &, const Dims &,     \
-                                 const Dims &)> &function,                     \
-        const Params &parameters)                                              \
-    {                                                                          \
-        CheckOperator(name);                                                   \
-        std::shared_ptr<Operator> callbackOperator =                           \
-            std::make_shared<callback::Signature1>(function, parameters);      \
-                                                                               \
-        auto itPair = m_Operators.emplace(name, std::move(callbackOperator));  \
-        return *itPair.first->second;                                          \
+    else
+    {
+        return &it->second;
     }
-
-ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
-#undef declare_type
-
-Operator &ADIOS::DefineCallBack(
-    const std::string name,
-    const std::function<void(void *, const std::string &, const std::string &,
-                             const std::string &, const size_t, const Dims &,
-                             const Dims &, const Dims &)> &function,
-    const Params &parameters)
-{
-    CheckOperator(name);
-    std::shared_ptr<Operator> callbackOperator =
-        std::make_shared<callback::Signature2>(function, parameters);
-
-    auto itPair = m_Operators.emplace(name, std::move(callbackOperator));
-    return *itPair.first->second;
 }
 
 bool ADIOS::RemoveIO(const std::string name)
@@ -363,7 +228,7 @@ void ADIOS::XMLInit(const std::string &configFileXML)
 
 void ADIOS::YAMLInit(const std::string &configFileYAML)
 {
-    helper::ParseConfigYAML(*this, configFileYAML, m_IOs, m_Operators);
+    helper::ParseConfigYAML(*this, configFileYAML, m_IOs);
 }
 
 } // end namespace core

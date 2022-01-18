@@ -32,6 +32,7 @@
 #include "adios2/engine/mhs/MhsWriter.h"
 #include "adios2/engine/null/NullEngine.h"
 #include "adios2/engine/nullcore/NullCoreWriter.h"
+#include "adios2/engine/plugin/PluginEngine.h"
 #include "adios2/engine/skeleton/SkeletonReader.h"
 #include "adios2/engine/skeleton/SkeletonWriter.h"
 
@@ -118,8 +119,6 @@ std::unordered_map<std::string, IO::EngineFactoryEntry> Factory = {
                        "HDF5 library, can't use HDF5 engine\n")
 #endif
     },
-    {"insitumpi", IO::NoEngineEntry("ERROR: this version didn't compile with "
-                                    "MPI, can't use InSituMPI engine\n")},
     {"skeleton",
      {IO::MakeEngine<engine::SkeletonReader>,
       IO::MakeEngine<engine::SkeletonWriter>}},
@@ -131,6 +130,9 @@ std::unordered_map<std::string, IO::EngineFactoryEntry> Factory = {
     {"nullcore",
      {IO::NoEngine("ERROR: nullcore engine does not support read mode"),
       IO::MakeEngine<engine::NullCoreWriter>}},
+    {"plugin",
+     {IO::MakeEngine<engine::PluginEngine>,
+      IO::MakeEngine<engine::PluginEngine>}},
 };
 
 // Synchronize access to the factory in case one thread is
@@ -495,10 +497,7 @@ void IO::AddOperation(const std::string &variable,
                       const Params &parameters) noexcept
 {
     PERFSTUBS_SCOPED_TIMER("IO::other");
-    auto params = helper::LowerCaseParams(parameters);
-    Operator *op = &m_ADIOS.DefineOperator(
-        m_Name + "_" + variable + "_" + operatorType, operatorType, params);
-    m_VarOpsPlaceholder[variable].emplace_back(Operation{op, params, Params()});
+    m_VarOpsPlaceholder[variable].push_back({operatorType, parameters});
 }
 
 Engine &IO::Open(const std::string &name, const Mode mode, helper::Comm comm)
@@ -561,12 +560,6 @@ Engine &IO::Open(const std::string &name, const Mode mode, helper::Comm comm)
             if (adios2sys::SystemTools::FileIsDirectory(name))
             {
                 char v = helper::BPVersion(name, comm, m_TransportsParameters);
-                if (v == 'X')
-                {
-                    // BP4 did not create this file pre 2.8.0 so if not found,
-                    // lets assume bp4
-                    v = '4';
-                }
                 engineTypeLC = "bp";
                 engineTypeLC.push_back(v);
             }
@@ -603,18 +596,12 @@ Engine &IO::Open(const std::string &name, const Mode mode, helper::Comm comm)
         }
     }
 
-    // filestream is either BP5 or BP4 depending on .bpversion
     /* Note: Mismatch between BP4/BP5 writer and FileStream reader is not
        handled if writer has not created the directory yet, when FileStream
-       falls back to default */
+       falls back to default (BP4) */
     if (engineTypeLC == "filestream")
     {
         char v = helper::BPVersion(name, comm, m_TransportsParameters);
-        if (v == 'X')
-        {
-            // FileStream default: BP4
-            v = '4';
-        }
         engineTypeLC = "bp";
         engineTypeLC.push_back(v);
         // std::cout << "Engine " << engineTypeLC << " selected for FileStream"
@@ -736,6 +723,30 @@ void IO::RemoveEngine(const std::string &name)
     if (itEngine != m_Engines.end())
     {
         m_Engines.erase(itEngine);
+    }
+}
+
+void IO::EnterComputationBlock() noexcept
+{
+    for (auto &enginePair : m_Engines)
+    {
+        auto &engine = enginePair.second;
+        if (engine->OpenMode() != Mode::Read)
+        {
+            enginePair.second->EnterComputationBlock();
+        }
+    }
+}
+
+void IO::ExitComputationBlock() noexcept
+{
+    for (auto &enginePair : m_Engines)
+    {
+        auto &engine = enginePair.second;
+        if (engine->OpenMode() != Mode::Read)
+        {
+            enginePair.second->ExitComputationBlock();
+        }
     }
 }
 

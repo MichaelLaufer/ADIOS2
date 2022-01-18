@@ -101,47 +101,45 @@ void PNGAccuracy2D(const std::string compressionLevel)
                                                 adios2::ConstantDims);
 
         // add operations
-        adios2::Operator PNGOp =
-            adios.DefineOperator("PNGCompressor", adios2::ops::LosslessPNG);
 
-        var_i8.AddOperation(PNGOp, {{adios2::ops::png::key::color_type,
+        var_i8.AddOperation("png", {{adios2::ops::png::key::color_type,
                                      adios2::ops::png::value::color_type_GRAY},
                                     {adios2::ops::png::key::compression_level,
                                      compressionLevel}});
 
         var_i16.AddOperation(
-            PNGOp,
+            "png",
             {{adios2::ops::png::key::color_type,
               adios2::ops::png::value::color_type_GRAY_ALPHA},
              {adios2::ops::png::key::compression_level, compressionLevel}});
 
         var_i32.AddOperation(
-            PNGOp,
+            "png",
             {{adios2::ops::png::key::color_type,
               adios2::ops::png::value::color_type_RGB_ALPHA},
              {adios2::ops::png::key::compression_level, compressionLevel}});
 
-        var_u8.AddOperation(PNGOp, {{adios2::ops::png::key::color_type,
+        var_u8.AddOperation("png", {{adios2::ops::png::key::color_type,
                                      adios2::ops::png::value::color_type_GRAY},
                                     {adios2::ops::png::key::compression_level,
                                      compressionLevel}});
 
         var_u16.AddOperation(
-            PNGOp,
+            "png",
             {{adios2::ops::png::key::color_type,
               adios2::ops::png::value::color_type_GRAY_ALPHA},
              {adios2::ops::png::key::compression_level, compressionLevel}});
 
         var_u32.AddOperation(
-            PNGOp,
+            "png",
             {{adios2::ops::png::key::color_type,
               adios2::ops::png::value::color_type_RGB_ALPHA},
              {adios2::ops::png::key::compression_level, compressionLevel}});
 
-        var_u32.AddOperation(PNGOp, {{adios2::ops::png::key::compression_level,
+        var_u32.AddOperation("png", {{adios2::ops::png::key::compression_level,
                                       compressionLevel}});
 
-        var_r32.AddOperation(PNGOp, {{adios2::ops::png::key::compression_level,
+        var_r32.AddOperation("png", {{adios2::ops::png::key::compression_level,
                                       compressionLevel}});
 
         adios2::Engine bpWriter = io.Open(fname, adios2::Mode::Write);
@@ -344,13 +342,11 @@ void PNGAccuracy2DSel(const std::string accuracy)
                                                  adios2::ConstantDims);
 
         // add operations
-        adios2::Operator PNGOp =
-            adios.DefineOperator("PNGCompressor", adios2::ops::LosslessPNG);
 
         var_r32.AddOperation(
-            PNGOp, {{adios2::ops::png::key::compression_level, accuracy}});
+            "png", {{adios2::ops::png::key::compression_level, accuracy}});
         var_r64.AddOperation(
-            PNGOp, {{adios2::ops::png::key::compression_level, accuracy}});
+            "png", {{adios2::ops::png::key::compression_level, accuracy}});
 
         adios2::Engine bpWriter = io.Open(fname, adios2::Mode::Write);
 
@@ -380,32 +376,32 @@ void PNGAccuracy2DSel(const std::string accuracy)
 
         adios2::Engine bpReader = io.Open(fname, adios2::Mode::Read);
 
-        auto var_r32 = io.InquireVariable<float>("r32");
-        EXPECT_TRUE(var_r32);
-        ASSERT_EQ(var_r32.ShapeID(), adios2::ShapeID::GlobalArray);
-        ASSERT_EQ(var_r32.Steps(), NSteps);
-        ASSERT_EQ(var_r32.Shape()[0], mpiSize * Nx);
-        ASSERT_EQ(var_r32.Shape()[1], Ny);
-
-        auto var_r64 = io.InquireVariable<double>("r64");
-        EXPECT_TRUE(var_r64);
-        ASSERT_EQ(var_r64.ShapeID(), adios2::ShapeID::GlobalArray);
-        ASSERT_EQ(var_r64.Steps(), NSteps);
-        ASSERT_EQ(var_r64.Shape()[0], mpiSize * Nx);
-        ASSERT_EQ(var_r64.Shape()[1], Ny);
-
-        const adios2::Dims start{mpiRank * Nx + Nx / 2, 0};
-        const adios2::Dims count{Nx / 2, Ny};
-        const adios2::Box<adios2::Dims> sel(start, count);
-        var_r32.SetSelection(sel);
-        var_r64.SetSelection(sel);
-
         unsigned int t = 0;
         std::vector<float> decompressedR32s;
         std::vector<double> decompressedR64s;
 
         while (bpReader.BeginStep() == adios2::StepStatus::OK)
         {
+            auto var_r32 = io.InquireVariable<float>("r32");
+            EXPECT_TRUE(var_r32);
+            ASSERT_EQ(var_r32.ShapeID(), adios2::ShapeID::GlobalArray);
+            ASSERT_EQ(var_r32.Steps(), NSteps);
+            ASSERT_EQ(var_r32.Shape()[0], mpiSize * Nx);
+            ASSERT_EQ(var_r32.Shape()[1], Ny);
+
+            auto var_r64 = io.InquireVariable<double>("r64");
+            EXPECT_TRUE(var_r64);
+            ASSERT_EQ(var_r64.ShapeID(), adios2::ShapeID::GlobalArray);
+            ASSERT_EQ(var_r64.Steps(), NSteps);
+            ASSERT_EQ(var_r64.Shape()[0], mpiSize * Nx);
+            ASSERT_EQ(var_r64.Shape()[1], Ny);
+
+            const adios2::Dims start{mpiRank * Nx + Nx / 2, 0};
+            const adios2::Dims count{Nx / 2, Ny};
+            const adios2::Box<adios2::Dims> sel(start, count);
+            var_r32.SetSelection(sel);
+            var_r64.SetSelection(sel);
+
             bpReader.Get(var_r32, decompressedR32s);
             bpReader.Get(var_r64, decompressedR64s);
             bpReader.EndStep();

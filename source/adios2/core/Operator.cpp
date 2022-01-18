@@ -16,15 +16,17 @@ namespace adios2
 namespace core
 {
 
-Operator::Operator(const std::string type, const Params &parameters)
-: m_Type(type), m_Parameters(parameters)
+Operator::Operator(const std::string typeString, const OperatorType typeEnum,
+                   const Params &parameters)
+: m_TypeString(typeString), m_TypeEnum(typeEnum),
+  m_Parameters(helper::LowerCaseParams(parameters))
 {
 }
 
 void Operator::SetParameter(const std::string key,
                             const std::string value) noexcept
 {
-    m_Parameters[key] = value;
+    m_Parameters[helper::LowerCase(key)] = value;
 }
 
 Params &Operator::GetParameters() noexcept { return m_Parameters; }
@@ -47,26 +49,6 @@ void Operator::RunCallback2(void *arg0, const std::string &arg1,
                             const Dims &arg6, const Dims &arg7) const
 {
     CheckCallbackType("Callback2");
-}
-
-size_t Operator::Operate(const char * /*dataIn*/, const Dims & /*blockStart*/,
-                         const Dims & /*blockCount*/, const DataType /*type*/,
-                         char * /*bufferOut*/, const Params & /*params*/)
-{
-    throw std::invalid_argument("ERROR: signature (const void*, const "
-                                "Dims, const size_t, const std::string, "
-                                "void*, const Params&) not supported "
-                                "by derived class implemented with " +
-                                m_Type + ", in call to Compress\n");
-}
-
-size_t Operator::InverseOperate(const char *bufferIn, const size_t sizeIn,
-                                char *dataOut)
-{
-    throw std::invalid_argument(
-        "ERROR: signature (const void*, const size_t, void) not supported "
-        "by derived class implemented with " +
-        m_Type + ", in call to Decompress\n");
 }
 
 // PROTECTED
@@ -119,9 +101,9 @@ Dims Operator::ConvertDims(const Dims &dimensions, const DataType type,
 // PRIVATE
 void Operator::CheckCallbackType(const std::string type) const
 {
-    if (m_Type != type)
+    if (m_TypeString != type)
     {
-        throw std::invalid_argument("ERROR: operator of type " + m_Type +
+        throw std::invalid_argument("ERROR: operator of type " + m_TypeString +
                                     " doesn't match expected callback type " +
                                     type + " arguments\n");
     }

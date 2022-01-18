@@ -1090,11 +1090,21 @@ int printVariableInfo(core::Engine *fp, core::IO *io,
         {
             if (timestep == false)
             {
-                fprintf(outf, " = ");
-                print_data(&variable->m_Min, 0, adiosvartype, false);
-                fprintf(outf, " / ");
-                print_data(&variable->m_Max, 0, adiosvartype, false);
-
+                core::Engine::MinMaxStruct MinMax;
+                if (fp->VariableMinMax(*variable, DefaultSizeT, MinMax))
+                {
+                    fprintf(outf, " = ");
+                    print_data(&MinMax.MinUnion, 0, adiosvartype, false);
+                    fprintf(outf, " / ");
+                    print_data(&MinMax.MaxUnion, 0, adiosvartype, false);
+                }
+                else
+                {
+                    fprintf(outf, " = ");
+                    print_data(&variable->m_Min, 0, adiosvartype, false);
+                    fprintf(outf, " / ");
+                    print_data(&variable->m_Max, 0, adiosvartype, false);
+                }
                 // fprintf(outf," {MIN / MAX} ");
             }
 #if 0
@@ -3019,6 +3029,30 @@ Dims get_global_array_signature(core::Engine *fp, core::IO *io,
 
         // looping over the absolute step indexes
         // is not supported by a simple API function
+        auto minBlocks = fp->MinBlocksInfo(*variable, fp->CurrentStep());
+
+        if (minBlocks)
+        {
+            delete minBlocks;
+            for (size_t step = 0; step < nsteps; step++)
+            {
+                minBlocks = fp->MinBlocksInfo(*variable, step);
+                for (size_t k = 0; k < ndim; k++)
+                {
+                    if (firstStep)
+                    {
+                        dims[k] = minBlocks->Shape[k];
+                    }
+                    else if (dims[k] != minBlocks->Shape[k])
+                    {
+                        dims[k] = 0;
+                    }
+                }
+                firstStep = false;
+                delete minBlocks;
+            }
+            return dims;
+        }
         const std::map<size_t, std::vector<size_t>> &indices =
             variable->m_AvailableStepBlockIndexOffsets;
         auto itStep = indices.begin();
@@ -3473,16 +3507,13 @@ void print_decomp_singlestep(core::Engine *fp, core::IO *io,
                     }
                     else
                     {
-                        // fprintf(outf, " = ");
-                        // print_data(&minBlocks->BlocksInfo[j].MinUnion, 0,
-                        // adiosvartype, false);
-
-                        // fprintf(outf, " / ");
-                        // print_data(&minBlocks->BlocksInfo[j].MaxUnion, 0,
-                        // adiosvartype, false);
-                        //  No min max for minBlocks at the moment
                         fprintf(outf, " = ");
-                        fprintf(outf, "N/A / N/A");
+                        print_data(&minBlocks->BlocksInfo[j].MinMax.MinUnion, 0,
+                                   adiosvartype, false);
+
+                        fprintf(outf, " / ");
+                        print_data(&minBlocks->BlocksInfo[j].MinMax.MaxUnion, 0,
+                                   adiosvartype, false);
                     }
                 }
                 else

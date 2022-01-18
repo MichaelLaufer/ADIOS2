@@ -22,6 +22,7 @@
 #include "adios2/core/Variable.h"
 #include "adios2/helper/adiosFunctions.h" //helper::GetTotalSize
 #include "adios2/helper/adiosString.h"
+#include "adios2/operator/OperatorFactory.h"
 
 #ifdef ADIOS2_HAVE_CUDA
 #include <cuda.h>
@@ -240,20 +241,28 @@ void VariableBase::SetStepSelection(const Box<size_t> &boxSteps)
     }
 }
 
-size_t VariableBase::AddOperation(Operator &op,
+size_t VariableBase::AddOperation(const std::string &type,
                                   const Params &parameters) noexcept
 {
-    if (op.IsDataTypeValid(m_Type))
+    auto op = MakeOperator(type, parameters);
+    if (op->IsDataTypeValid(m_Type))
     {
-        m_Operations.push_back(
-            Operation{&op, helper::LowerCaseParams(parameters), Params()});
+        m_Operations.push_back(op);
     }
     else
     {
-        std::cerr << "ADIOS2 ERROR: Operator " << op.m_Type
-                  << " does not support data type " << m_Type
-                  << ", operator not added" << std::endl;
+        helper::Log("Variable", "VariableBase", "AddOperation",
+                    "Operator " + op->m_TypeString +
+                        " does not support data type " + ToString(m_Type) +
+                        ", operator not added",
+                    helper::LogMode::WARNING);
     }
+    return m_Operations.size() - 1;
+}
+
+size_t VariableBase::AddOperation(std::shared_ptr<core::Operator> op) noexcept
+{
+    m_Operations.push_back(op);
     return m_Operations.size() - 1;
 }
 
@@ -271,7 +280,7 @@ void VariableBase::SetOperationParameter(const size_t operationID,
             "SetOperationParameter\n");
     }
 
-    m_Operations[operationID].Parameters[key] = value;
+    m_Operations[operationID]->SetParameter(key, value);
 }
 
 void VariableBase::CheckDimensions(const std::string hint) const

@@ -25,6 +25,7 @@
 #include "adios2/common/ADIOSTypes.h"
 #include "adios2/core/ADIOS.h"
 #include "adios2/core/Attribute.h"
+#include "adios2/core/CoreTypes.h"
 #include "adios2/core/Group.h"
 #include "adios2/core/Variable.h"
 #include "adios2/core/VariableCompound.h"
@@ -67,14 +68,6 @@ public:
     /** From AddTransport, parameters in map for each transport in vector */
     std::vector<Params> m_TransportsParameters;
 
-    /** Carries information about operations added with AddOperation */
-    struct Operation
-    {
-        Operator *Op;
-        Params Parameters;
-        Params Info;
-    };
-
     /** BP3 engine default if unknown */
     std::string m_EngineType = "File";
 
@@ -87,7 +80,8 @@ public:
 
     /** placeholder when reading XML file variable operations, executed until
      * DefineVariable in code */
-    std::map<std::string, std::vector<Operation>> m_VarOpsPlaceholder;
+    std::unordered_map<std::string, std::vector<std::pair<std::string, Params>>>
+        m_VarOpsPlaceholder;
 
     /** true: prefix variables/attributes are cached per variable
      *   when function m_IsPrefixedNames called */
@@ -493,6 +487,11 @@ public:
     {
         return m_Engines;
     }
+
+    /** Inform about computation block through User->ADIOS */
+    void EnterComputationBlock() noexcept;
+    /** Inform about computation block through User->ADIOS */
+    void ExitComputationBlock() noexcept;
 
 private:
     /** true: exist in config file (XML) */

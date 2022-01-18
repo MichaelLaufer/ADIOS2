@@ -80,19 +80,23 @@ size_t Variable::AddOperation(const Operator op, const Params &parameters)
 {
     helper::CheckForNullptr(m_VariableBase,
                             "in call to Variable::AddOperation");
-    return m_VariableBase->AddOperation(*op.m_Operator, parameters);
+    auto params = op.Parameters();
+    for (const auto &p : parameters)
+    {
+        params[p.first] = p.second;
+    }
+    return m_VariableBase->AddOperation(op.m_Type, params);
 }
 
-std::vector<Variable::Operation> Variable::Operations() const
+std::vector<Operator> Variable::Operations() const
 {
     helper::CheckForNullptr(m_VariableBase, "in call to Variable::Operations");
-    std::vector<Variable::Operation> operations;
+    std::vector<Operator> operations;
     operations.reserve(m_VariableBase->m_Operations.size());
 
     for (const auto &op : m_VariableBase->m_Operations)
     {
-        operations.push_back(
-            Operation{Operator(op.Op), op.Parameters, op.Info});
+        operations.push_back(Operator(op->m_TypeString, &op->GetParameters()));
     }
     return operations;
 }

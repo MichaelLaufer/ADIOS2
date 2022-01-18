@@ -23,6 +23,6 @@ Parameters are passed at:
 .. include:: ssc.rst
 .. include:: dataman.rst
 .. include:: inline.rst
-.. include:: insitu_mpi.rst
 .. include:: null.rst
+.. include:: plugin.rst
 .. include:: virtual_engines.rst

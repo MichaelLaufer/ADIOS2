@@ -85,7 +85,7 @@ void MallocV::CopyExternalToInternal()
 }
 
 size_t MallocV::AddToVec(const size_t size, const void *buf, size_t align,
-                         bool CopyReqd)
+                         bool CopyReqd, MemorySpace MemSpace)
 {
     if (size == 0)
     {
@@ -181,6 +181,13 @@ BufferV::BufferPos MallocV::Allocate(const size_t size, size_t align)
     m_internalPos += size;
 
     return bp;
+}
+
+void MallocV::DownsizeLastAlloc(const size_t oldSize, const size_t newSize)
+{
+    DataV.back().Size -= (oldSize - newSize);
+    CurOffset -= (oldSize - newSize);
+    m_internalPos -= (oldSize - newSize);
 }
 
 void *MallocV::GetPtr(int bufferIdx, size_t posInBuffer)

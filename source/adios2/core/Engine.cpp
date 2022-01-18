@@ -95,12 +95,17 @@ size_t Engine::DebugGetDataBufferSize() const
     return 0;
 }
 
+void Engine::EnterComputationBlock() noexcept {}
+void Engine::ExitComputationBlock() noexcept {}
+
 // PROTECTED
 void Engine::Init() {}
 void Engine::InitParameters() {}
 void Engine::InitTransports() {}
 
 void Engine::NotifyEngineAttribute(std::string name, DataType type) noexcept {}
+
+void Engine::NotifyEngineNoVarsQuery() {}
 
 // DoPut*
 #define declare_type(T)                                                        \

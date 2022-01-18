@@ -12,14 +12,15 @@
 
 /// \cond EXCLUDE_FROM_DOXYGEN
 #include <functional> //std::function
-#include <map>
-#include <memory> //std::shared_ptr
+#include <memory>     //std::shared_ptr
 #include <string>
+#include <unordered_map>
 #include <vector>
 /// \endcond
 
 #include "adios2/common/ADIOSConfig.h"
 #include "adios2/common/ADIOSTypes.h"
+#include "adios2/core/CoreTypes.h"
 #include "adios2/core/Operator.h"
 #include "adios2/helper/adiosComm.h"
 
@@ -27,7 +28,6 @@ namespace adios2
 {
 namespace core
 {
-
 class IO;
 
 /** @brief Point of entry class for an application.
@@ -119,37 +119,17 @@ public:
      * @exception std::invalid_argument if Operator with unique name is already
      * defined
      */
-    Operator &DefineOperator(const std::string &name, const std::string type,
-                             const Params &parameters = Params());
+    std::pair<std::string, Params> &
+    DefineOperator(const std::string &name, const std::string type,
+                   const Params &parameters = Params());
     /**
      * Retrieve a reference pointer to an existing Operator object
      * created with DefineOperator.
      * @return if IO exists returns a reference to existing IO object inside
      * ADIOS, otherwise a nullptr
      */
-    Operator *InquireOperator(const std::string &name) noexcept;
-
-/** define CallBack1 */
-#define declare_type(T)                                                        \
-    Operator &DefineCallBack(                                                  \
-        const std::string name,                                                \
-        const std::function<void(const T *, const std::string &,               \
-                                 const std::string &, const std::string &,     \
-                                 const size_t, const Dims &, const Dims &,     \
-                                 const Dims &)> &function,                     \
-        const Params &parameters);
-
-    ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
-#undef declare_type
-
-    /** define CallBack2 */
-    Operator &DefineCallBack(
-        const std::string name,
-        const std::function<void(void *, const std::string &,
-                                 const std::string &, const std::string &,
-                                 const size_t, const Dims &, const Dims &,
-                                 const Dims &)> &function,
-        const Params &parameters);
+    std::pair<std::string, Params> *
+    InquireOperator(const std::string &name) noexcept;
 
     /**
      * DANGER ZONE: removes a particular IO. This will effectively eliminate any
@@ -165,6 +145,14 @@ public:
      * effectively eliminate any parameter from the config.xml file
      */
     void RemoveAllIOs() noexcept;
+
+    /** Inform ADIOS about entering communication-free computation block
+     * in main thread. Useful when using Async IO */
+    void EnterComputationBlock() noexcept;
+
+    /** Inform ADIOS about exiting communication-free computation block
+     * in main thread. Useful when using Async IO */
+    void ExitComputationBlock() noexcept;
 
 private:
     /** Communicator given to parallel constructor. */
@@ -185,7 +173,10 @@ private:
     std::map<std::string, IO> m_IOs;
 
     /** operators created with DefineOperator */
-    std::map<std::string, std::shared_ptr<Operator>> m_Operators;
+    std::unordered_map<std::string, std::pair<std::string, Params>> m_Operators;
+
+    /** Flag for Enter/ExitComputationBlock */
+    bool enteredComputationBlock = false;
 
     void CheckOperator(const std::string name) const;
 

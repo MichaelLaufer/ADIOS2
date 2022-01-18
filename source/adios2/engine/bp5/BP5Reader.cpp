@@ -238,7 +238,7 @@ void BP5Reader::Init()
         throw std::invalid_argument(
             "ERROR: BPFileReader only "
             "supports OpenMode::Read or OpenMode::ReadRandomAccess from" +
-            m_Name + " " + m_EndMessage);
+            m_Name);
     }
 
     // if IO was involved in reading before this flag may be true now
@@ -747,6 +747,22 @@ ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
 #undef declare_type
 
 size_t BP5Reader::DoSteps() const { return m_StepsCount; }
+
+void BP5Reader::NotifyEngineNoVarsQuery()
+{
+    if (!m_BetweenStepPairs)
+    {
+        throw std::logic_error(
+            "ERROR: You've called InquireVariable() when the IO is empty and "
+            "outside a BeginStep/EndStep pair.  If this is code that is newly "
+            "transititioning to the BP5 file engine, you may be relying upon "
+            "deprecated behaviour.  If you intend to use ADIOS using the "
+            "Begin/EndStep interface, move all InquireVariable calls inside "
+            "the BeginStep/EndStep pair.  If intending to use random-access "
+            "file mode, change your Open() mode parameter to "
+            "Mode::ReadRandomAccess.\n");
+    }
+}
 
 } // end namespace engine
 } // end namespace core

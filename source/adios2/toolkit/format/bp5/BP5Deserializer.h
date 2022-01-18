@@ -81,8 +81,10 @@ private:
         char *VarName = NULL;
         size_t DimCount = 0;
         ShapeID OrigShapeID;
+        char *Operator = NULL;
         DataType Type;
         int ElementSize = 0;
+        size_t MinMaxOffset = SIZE_MAX;
         size_t *GlobalDims = NULL;
         size_t LastTSAdded = SIZE_MAX;
         size_t FirstTSSeen = SIZE_MAX;
@@ -126,6 +128,7 @@ private:
     FFSContext ReaderFFSContext;
     size_t m_WriterCohortSize;
     bool m_RandomAccessMode;
+    size_t m_LastAttrStep = MaxSizeT; // invalid timestep for start
 
     std::unordered_map<std::string, BP5VarRec *> VarByName;
     std::unordered_map<void *, BP5VarRec *> VarByKey;
@@ -154,7 +157,8 @@ private:
     void BreakdownVarName(const char *Name, char **base_name_p,
                           DataType *type_p, int *element_size_p);
     void BreakdownArrayName(const char *Name, char **base_name_p,
-                            DataType *type_p, int *element_size_p);
+                            DataType *type_p, int *element_size_p,
+                            char **Operator, bool *MinMax);
     void *VarSetup(core::Engine *engine, const char *variableName,
                    const DataType type, void *data);
     void *ArrayVarSetup(core::Engine *engine, const char *variableName,
@@ -164,7 +168,7 @@ private:
                                const size_t *LocalOffsets, size_t *LocalIndex);
     size_t RelativeToAbsoluteStep(const BP5VarRec *VarRec, size_t RelStep);
     int FindOffset(size_t Dims, const size_t *Size, const size_t *Index);
-    void GetSingleValueFromMetadata(core::VariableBase &variable,
+    bool GetSingleValueFromMetadata(core::VariableBase &variable,
                                     BP5VarRec *VarRec, void *DestData,
                                     size_t Step, size_t WriterRank);
     void ExtractSelectionFromPartialRM(int ElementSize, size_t Dims,

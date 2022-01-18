@@ -12,6 +12,12 @@ file(MAKE_DIRECTORY ${BP4_DIR})
 file(MAKE_DIRECTORY ${BP5_DIR})
 file(MAKE_DIRECTORY ${FS_DIR})
 
+set(BP5_ASYNC_DIR ${BP5_DIR}/async)
+file(MAKE_DIRECTORY ${BP5_ASYNC_DIR}/tls-guided)
+file(MAKE_DIRECTORY ${BP5_ASYNC_DIR}/tls-naive)
+file(MAKE_DIRECTORY ${BP5_ASYNC_DIR}/ews-guided)
+file(MAKE_DIRECTORY ${BP5_ASYNC_DIR}/ews-naive)
+
 macro(bp3_bp4_gtest_add_tests_helper testname mpi)
   gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .BP3
     WORKING_DIRECTORY ${BP3_DIR} EXTRA_ARGS "BP3"
@@ -19,6 +25,17 @@ macro(bp3_bp4_gtest_add_tests_helper testname mpi)
   gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .BP4
     WORKING_DIRECTORY ${BP4_DIR} EXTRA_ARGS "BP4"
   )
+endmacro()
+
+macro(bp4_bp5_gtest_add_tests_helper testname mpi)
+  gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .BP4
+    WORKING_DIRECTORY ${BP4_DIR} EXTRA_ARGS "BP4"
+  )
+  if(ADIOS2_HAVE_BP5)
+  gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .BP5
+    WORKING_DIRECTORY ${BP5_DIR} EXTRA_ARGS "BP5"
+  )
+endif()
 endmacro()
 
 macro(bp_gtest_add_tests_helper testname mpi)
@@ -35,21 +52,50 @@ macro(bp_gtest_add_tests_helper testname mpi)
   endif()
 endmacro()
 
+macro(async_gtest_add_tests_helper testname mpi)
+  if(ADIOS2_HAVE_BP5)
+    gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .Async.BP5.TLS.Guided
+      WORKING_DIRECTORY ${BP5_ASYNC_DIR}/tls-guided EXTRA_ARGS "BP5" "AggregationType=TwoLevelShm,AsyncWrite=Guided"
+    )
+    gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .Async.BP5.TLS.Naive
+      WORKING_DIRECTORY ${BP5_ASYNC_DIR}/tls-naive EXTRA_ARGS "BP5" "AggregationType=TwoLevelShm,AsyncWrite=Naive"
+    )
+    gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .Async.BP5.EWS.Guided
+      WORKING_DIRECTORY ${BP5_ASYNC_DIR}/ews-guided EXTRA_ARGS "BP5" "AggregationType=EveryoneWritesSerial,AsyncWrite=Guided"
+    )
+    gtest_add_tests_helper(${testname} ${mpi} BP Engine.BP. .Async.BP5.EWS.Naive
+      WORKING_DIRECTORY ${BP5_ASYNC_DIR}/ews-naive EXTRA_ARGS "BP5" "AggregationType=EveryoneWritesSerial,AsyncWrite=Naive"
+    )
+  endif()
+endmacro()
+
 add_subdirectory(operations)
 
+# These tests should be *very* fast
+set(CTEST_TEST_TIMEOUT 10)
+
 bp_gtest_add_tests_helper(WriteReadADIOS2 MPI_ALLOW)
+async_gtest_add_tests_helper(WriteReadADIOS2 MPI_ALLOW)
+
 bp_gtest_add_tests_helper(WriteReadADIOS2fstream MPI_ALLOW)
 bp3_bp4_gtest_add_tests_helper(WriteReadADIOS2stdio MPI_ALLOW)
-bp_gtest_add_tests_helper(WriteReadAsStreamADIOS2 MPI_ALLOW)
-bp_gtest_add_tests_helper(WriteReadAsStreamADIOS2_Threads MPI_ALLOW)
+bp3_bp4_gtest_add_tests_helper(WriteReadAsStreamADIOS2 MPI_ALLOW)
+bp3_bp4_gtest_add_tests_helper(WriteReadAsStreamADIOS2_Threads MPI_ALLOW)
 bp_gtest_add_tests_helper(WriteReadAttributes MPI_ALLOW)
-bp_gtest_add_tests_helper(FStreamWriteReadHighLevelAPI MPI_ALLOW)
+bp3_bp4_gtest_add_tests_helper(FStreamWriteReadHighLevelAPI MPI_ALLOW)
 bp3_bp4_gtest_add_tests_helper(WriteFlushRead MPI_ALLOW)
 bp3_bp4_gtest_add_tests_helper(WriteMultiblockRead MPI_ALLOW)
 bp3_bp4_gtest_add_tests_helper(WriteReadMultiblock MPI_ALLOW)
 bp_gtest_add_tests_helper(WriteReadVector MPI_ALLOW)
-bp3_bp4_gtest_add_tests_helper(WriteReadAttributesMultirank MPI_ALLOW)
-bp3_bp4_gtest_add_tests_helper(LargeMetadata MPI_ALLOW)
+bp_gtest_add_tests_helper(WriteReadAttributesMultirank MPI_ALLOW)
+bp_gtest_add_tests_helper(LargeMetadata MPI_ALLOW)
+if(ADIOS2_HAVE_BP5)
+   set (BP5LargeMeta "Engine.BP.BPLargeMetadata.BPWrite1D_LargeMetadata.BP5.Serial")
+   if (ADIOS2_HAVE_MPI)
+      list (APPEND BP5LargeMeta  "Engine.BP.BPLargeMetadata.BPWrite1D_LargeMetadata.BP5.MPI" "Engine.BP.BPLargeMetadata.ManyLongStrings.BP5.MPI")
+   endif()
+   set_tests_properties(${BP5LargeMeta} PROPERTIES RUN_SERIAL TRUE)
+endif()
 bp_gtest_add_tests_helper(WriteMemorySelectionRead MPI_ALLOW)
 bp_gtest_add_tests_helper(WriteReadLocalVariables MPI_ALLOW)
 bp_gtest_add_tests_helper(WriteReadLocalVariablesSel MPI_ALLOW)
@@ -61,13 +107,13 @@ bp3_bp4_gtest_add_tests_helper(TimeAggregation MPI_ALLOW)
 bp_gtest_add_tests_helper(NoXMLRecovery MPI_ALLOW)
 bp3_bp4_gtest_add_tests_helper(StepsFileGlobalArray MPI_ALLOW)
 bp3_bp4_gtest_add_tests_helper(StepsFileLocalArray MPI_ALLOW)
-bp3_bp4_gtest_add_tests_helper(SelectSteps MPI_ALLOW)
+bp_gtest_add_tests_helper(SelectSteps MPI_ALLOW)
 
 bp3_bp4_gtest_add_tests_helper(SelectionsOnRowMajorData MPI_NONE)
 bp3_bp4_gtest_add_tests_helper(SelectionsOnColumnMajorData MPI_NONE)
 
 if(NOT MSVC)
-  bp3_bp4_gtest_add_tests_helper(BufferSize MPI_NONE)
+  bp_gtest_add_tests_helper(BufferSize MPI_NONE)
 endif()
 
 if(ADIOS2_HAVE_MPI)
@@ -79,10 +125,13 @@ gtest_add_tests_helper(WriteNull MPI_ALLOW BP Engine.BP. .BP3
   WORKING_DIRECTORY ${BP3_DIR} EXTRA_ARGS "BP3"
 )
 
+# BP4 and BP5 but NOT BP3
+bp4_bp5_gtest_add_tests_helper(WriteAppendReadADIOS2 MPI_ALLOW)
+
 # BP4 only for now
-gtest_add_tests_helper(WriteAppendReadADIOS2 MPI_ALLOW BP Engine.BP. .BP4
-  WORKING_DIRECTORY ${BP4_DIR} EXTRA_ARGS "BP4"
-)
+#gtest_add_tests_helper(WriteAppendReadADIOS2 MPI_ALLOW BP Engine.BP. .BP4
+#  WORKING_DIRECTORY ${BP4_DIR} EXTRA_ARGS "BP4"
+#)
 gtest_add_tests_helper(StepsInSituGlobalArray MPI_ALLOW BP Engine.BP. .BP4
   WORKING_DIRECTORY ${BP4_DIR} EXTRA_ARGS "BP4"
 )
@@ -104,4 +153,5 @@ gtest_add_tests_helper(StepsInSituGlobalArray MPI_ALLOW BP Engine.BP. .FileStrea
 gtest_add_tests_helper(StepsInSituLocalArray MPI_ALLOW BP Engine.BP. .FileStream
   WORKING_DIRECTORY ${FS_DIR} EXTRA_ARGS "FileStream"
 )
+
 
