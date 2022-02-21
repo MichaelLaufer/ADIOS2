@@ -452,161 +452,15 @@ public:
     /* for adios2 internal testing */
     virtual size_t DebugGetDataBufferSize() const;
 
-    union PrimitiveStdtypeUnion
-    {
-#define declare_field(T, N) T field_##N;
-        ADIOS2_FOREACH_MINMAX_STDTYPE_2ARGS(declare_field)
-#undef declare_field
-    };
-
-    struct MinMaxStruct
-    {
-        union PrimitiveStdtypeUnion MinUnion;
-        union PrimitiveStdtypeUnion MaxUnion;
-        void Init(DataType Type)
-        {
-            memset(this, 0, sizeof(struct MinMaxStruct));
-            switch (Type)
-            {
-            case DataType::None:
-                break;
-            case DataType::Int8:
-                MinUnion.field_int8 = INT8_MAX;
-                MaxUnion.field_int8 = INT8_MIN;
-                break;
-            case DataType::Int16:
-                MinUnion.field_int16 = INT16_MAX;
-                MaxUnion.field_int16 = INT16_MIN;
-                break;
-            case DataType::Int32:
-                MinUnion.field_int32 = INT32_MAX;
-                MaxUnion.field_int32 = INT32_MIN;
-                break;
-            case DataType::Int64:
-                MinUnion.field_int64 = INT64_MAX;
-                MaxUnion.field_int64 = INT64_MIN;
-                break;
-            case DataType::Char:
-            case DataType::UInt8:
-                MinUnion.field_uint8 = UINT8_MAX;
-                MaxUnion.field_uint8 = 0;
-                break;
-            case DataType::UInt16:
-                MinUnion.field_uint16 = UINT16_MAX;
-                MaxUnion.field_uint16 = 0;
-                break;
-            case DataType::UInt32:
-                MinUnion.field_uint32 = UINT32_MAX;
-                MaxUnion.field_uint32 = 0;
-                break;
-            case DataType::UInt64:
-                MinUnion.field_uint64 = UINT64_MAX;
-                MaxUnion.field_uint64 = 0;
-                break;
-            case DataType::Float:
-                MinUnion.field_float = FLT_MAX;
-                MaxUnion.field_float = -FLT_MAX;
-                break;
-            case DataType::Double:
-                MinUnion.field_double = DBL_MAX;
-                MaxUnion.field_double = -DBL_MAX;
-                break;
-            case DataType::LongDouble:
-                MinUnion.field_ldouble = LDBL_MAX;
-                MaxUnion.field_ldouble = -LDBL_MAX;
-                break;
-            case DataType::FloatComplex:
-            case DataType::DoubleComplex:
-            case DataType::String:
-            case DataType::Compound:
-                break;
-            }
-        }
-        void Dump(DataType Type)
-        {
-            switch (Type)
-            {
-            case DataType::None:
-                break;
-            case DataType::Int8:
-                std::cout << "Min : " << MinUnion.field_int8
-                          << ", Max : " << MaxUnion.field_int8;
-                break;
-            case DataType::Int16:
-                std::cout << "Min : " << MinUnion.field_int16
-                          << ", Max : " << MaxUnion.field_int16;
-                break;
-            case DataType::Int32:
-                std::cout << "Min : " << MinUnion.field_int32
-                          << ", Max : " << MaxUnion.field_int32;
-                break;
-            case DataType::Int64:
-                std::cout << "Min : " << MinUnion.field_int64
-                          << ", Max : " << MaxUnion.field_int64;
-                break;
-            case DataType::Char:
-            case DataType::UInt8:
-                std::cout << "Min : " << MinUnion.field_uint8
-                          << ", Max : " << MaxUnion.field_uint8;
-                break;
-            case DataType::UInt16:
-                std::cout << "Min : " << MinUnion.field_uint16
-                          << ", Max : " << MaxUnion.field_uint16;
-                break;
-            case DataType::UInt32:
-                std::cout << "Min : " << MinUnion.field_uint32
-                          << ", Max : " << MaxUnion.field_uint32;
-                break;
-            case DataType::UInt64:
-                std::cout << "Min : " << MinUnion.field_uint64
-                          << ", Max : " << MaxUnion.field_uint64;
-                break;
-            case DataType::Float:
-                std::cout << "Min : " << MinUnion.field_float
-                          << ", Max : " << MaxUnion.field_float;
-                break;
-            case DataType::Double:
-                std::cout << "Min : " << MinUnion.field_double
-                          << ", Max : " << MaxUnion.field_double;
-                break;
-            case DataType::LongDouble:
-                std::cout << "Min : " << MinUnion.field_ldouble
-                          << ", Max : " << MaxUnion.field_ldouble;
-                break;
-            case DataType::FloatComplex:
-            case DataType::DoubleComplex:
-            case DataType::String:
-            case DataType::Compound:
-                break;
-            }
-        }
-    };
-    struct MinBlockInfo
-    {
-        int WriterID = 0;
-        size_t BlockID = 0;
-        size_t *Start;
-        size_t *Count;
-        MinMaxStruct MinMax;
-        void *BufferP = NULL;
-    };
-    struct MinVarInfo
-    {
-        int Dims;
-        size_t *Shape;
-        bool IsValue = false;
-        bool IsReverseDims = false;
-        std::vector<struct MinBlockInfo> BlocksInfo;
-        MinVarInfo(int D, size_t *S)
-        : Dims(D), Shape(S), IsValue(false), IsReverseDims(false),
-          BlocksInfo({})
-        {
-        }
-    };
-
     //  in this call, Step is RELATIVE, not absolute
     virtual MinVarInfo *MinBlocksInfo(const VariableBase &,
                                       const size_t Step) const
+    {
+        return nullptr;
+    }
+
+    //  in this call, Step is RELATIVE, not absolute
+    virtual Dims *VarShape(const VariableBase &, const size_t Step) const
     {
         return nullptr;
     }
@@ -698,9 +552,7 @@ protected:
     DoAllRelativeStepsBlocksInfo(const Variable<T> &variable) const;           \
                                                                                \
     virtual std::vector<typename Variable<T>::BPInfo> DoBlocksInfo(            \
-        const Variable<T> &variable, const size_t step) const;                 \
-    virtual std::vector<size_t> DoGetAbsoluteSteps(                            \
-        const Variable<T> &variable) const;
+        const Variable<T> &variable, const size_t step) const;
 
     ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
 #undef declare_type
@@ -714,6 +566,9 @@ protected:
 #undef declare_type
 
     virtual size_t DoSteps() const;
+
+    virtual void DoGetAbsoluteSteps(const VariableBase &variable,
+                                    std::vector<size_t> &keys) const;
 
     /** true: No more definitions or changes to existing variables are allowed
      */
@@ -753,59 +608,6 @@ private:
     void CheckOpenModes(const std::set<Mode> &modes,
                         const std::string hint) const;
 };
-
-#define declare_template_instantiation(T)                                      \
-                                                                               \
-    extern template void Engine::Put<T>(Variable<T> &, const T *, const Mode); \
-    extern template void Engine::Put<T>(const std::string &, const T *,        \
-                                        const Mode);                           \
-                                                                               \
-    extern template void Engine::Put<T>(Variable<T> &, const T &, const Mode); \
-    extern template void Engine::Put<T>(const std::string &, const T &,        \
-                                        const Mode);                           \
-                                                                               \
-    extern template void Engine::Get<T>(Variable<T> &, T *, const Mode);       \
-    extern template void Engine::Get<T>(const std::string &, T *, const Mode); \
-                                                                               \
-    extern template void Engine::Get<T>(Variable<T> &, T &, const Mode);       \
-    extern template void Engine::Get<T>(const std::string &, T &, const Mode); \
-                                                                               \
-    extern template void Engine::Get<T>(Variable<T> &, std::vector<T> &,       \
-                                        const Mode);                           \
-                                                                               \
-    extern template void Engine::Get<T>(const std::string &, std::vector<T> &, \
-                                        const Mode);                           \
-                                                                               \
-    extern template typename Variable<T>::BPInfo *Engine::Get<T>(              \
-        Variable<T> &, const Mode);                                            \
-    extern template typename Variable<T>::BPInfo *Engine::Get<T>(              \
-        const std::string &, const Mode);                                      \
-                                                                               \
-    extern template Variable<T> &Engine::FindVariable(                         \
-        const std::string &variableName, const std::string hint);              \
-                                                                               \
-    extern template std::map<size_t,                                           \
-                             std::vector<typename Variable<T>::BPInfo>>        \
-    Engine::AllStepsBlocksInfo(const Variable<T> &) const;                     \
-                                                                               \
-    extern template std::vector<std::vector<typename Variable<T>::BPInfo>>     \
-    Engine::AllRelativeStepsBlocksInfo(const Variable<T> &) const;             \
-                                                                               \
-    extern template std::vector<typename Variable<T>::BPInfo>                  \
-    Engine::BlocksInfo(const Variable<T> &, const size_t) const;               \
-                                                                               \
-    extern template std::vector<size_t> Engine::GetAbsoluteSteps(              \
-        const Variable<T> &) const;
-
-ADIOS2_FOREACH_STDTYPE_1ARG(declare_template_instantiation)
-#undef declare_template_instantiation
-
-#define declare_template_instantiation(T)                                      \
-    extern template typename Variable<T>::Span &Engine::Put(                   \
-        Variable<T> &, const bool, const T &);                                 \
-    extern template void Engine::Get(Variable<T> &, T **) const;
-ADIOS2_FOREACH_PRIMITIVE_STDTYPE_1ARG(declare_template_instantiation)
-#undef declare_template_instantiation
 
 } // end namespace core
 } // end namespace adios2

@@ -1,5 +1,6 @@
 #include "Worker.h"
 
+#include "adios2/helper/adiosLog.h"
 #include "adios2/helper/adiosXMLUtil.h"
 
 #include <pugixml.hpp>
@@ -14,8 +15,9 @@ void XmlWorker::ParseMe()
         std::ifstream fileStream(configXML);
         if (!fileStream)
         {
-            throw std::ios_base::failure("ERROR: file " + configXML +
-                                         " not found. ");
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "query::XmlWorker", "ParseMe",
+                "file " + configXML + " not found");
         }
         std::ostringstream fileSS;
         fileSS << fileStream.rdbuf();
@@ -23,7 +25,9 @@ void XmlWorker::ParseMe()
 
         if (fileSS.str().empty())
         {
-            throw std::invalid_argument("ERROR: config xml file is empty.");
+            helper::Throw<std::invalid_argument>("Toolkit", "query::XmlWorker",
+                                                 "ParseMe",
+                                                 "config xml file is empty");
         }
 
         return fileSS.str();
@@ -78,9 +82,10 @@ void XmlWorker::ParseIONode(const pugi::xml_node &ioNode)
         adios2::helper::XMLAttribute("name", ioNode, "in query");
     if (m_SourceReader->m_IO.m_Name.compare(ioName->value()) != 0)
     {
-        throw std::ios_base::failure("invalid query io. Expecting io name = " +
-                                     m_SourceReader->m_IO.m_Name +
-                                     " found:" + ioName->value());
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "query::XmlWorker", "ParseIONode",
+            "invalid query io. Expecting io name = " +
+                m_SourceReader->m_IO.m_Name + " found:" + ioName->value());
     }
 #endif
 
@@ -103,8 +108,9 @@ void XmlWorker::ParseIONode(const pugi::xml_node &ioNode)
         }
         else if (!q->IsCompatible(ref))
         {
-            throw std::ios_base::failure("impactible query found on var:" +
-                                         q->GetVarName());
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "query::XmlWorker", "ParseIONode",
+                "impactible query found on var:" + q->GetVarName());
         }
         subqueries[name->value()] = q;
     }
@@ -142,8 +148,12 @@ QueryVar *XmlWorker::ParseVarNode(const pugi::xml_node &node,
     const DataType varType = currentIO.InquireVariableType(variableName);
     if (varType == DataType::None)
     {
-        std::cerr << "No such variable: " << variableName << std::endl;
-        throw std::ios_base::failure("No such variable: " + variableName);
+        helper::Log("Query", "XmlWorker", "ParseVarNode",
+                    "No such variable: " + variableName,
+                    helper::LogMode::ERROR);
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "query::XmlWorker", "ParseVarNode",
+            "variable: " + variableName + " not found");
     }
 #define declare_type(T)                                                        \
     if (varType == helper::GetDataType<T>())                                   \
@@ -206,7 +216,8 @@ void XmlWorker::ConstructQuery(QueryVar &simpleQ, const pugi::xml_node &node)
 
         if (start.size() != count.size())
         {
-            throw std::ios_base::failure(
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "query::XmlWorker", "ConstructQuery",
                 "dim of startcount does match in the bounding box definition");
         }
 
@@ -216,9 +227,10 @@ void XmlWorker::ConstructQuery(QueryVar &simpleQ, const pugi::xml_node &node)
         simpleQ.SetSelection(start, count);
         if (!simpleQ.IsSelectionValid(shape))
         {
-            throw std::ios_base::failure(
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "query::XmlWorker", "ConstructQuery",
                 "invalid selections for selection of var: " +
-                simpleQ.GetVarName());
+                    simpleQ.GetVarName());
         }
     }
 

@@ -1,7 +1,6 @@
 #include "Query.h"
-#include "adios2/helper/adiosFunctions.h"
-//#include <adios2.h>
 #include "BlockIndex.h"
+#include "adios2/helper/adiosFunctions.h"
 
 #include "Query.tcc"
 
@@ -90,7 +89,8 @@ bool QueryComposite::AddNode(QueryBase *var)
         // if (m_Nodes.size() > 0) return false;
         // don't want to support NOT for composite queries
         // return false;
-        throw std::ios_base::failure(
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "query::QueryComposite", "AddNode",
             "Currently NOT is not suppprted for composite query");
     }
     m_Nodes.push_back(var);
@@ -241,9 +241,10 @@ bool QueryVar::IsSelectionValid(adios2::Dims &shape) const
 
     if (m_Selection.first.size() != shape.size())
     {
-        std::cerr << "ERROR:  query selection dimension is different from "
-                     "shape dimension"
-                  << std::endl;
+        helper::Log(
+            "Query", "QueryVar", "IsSelectionValid",
+            "Query selection dimension is different from shape dimension",
+            helper::LogMode::ERROR);
         return false; // different dimension
     }
 
@@ -266,7 +267,8 @@ void QueryVar::LoadSelection(const std::string &startStr,
 
     if (start.size() != count.size())
     {
-        throw std::ios_base::failure(
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "query::QueryVar", "LoadSelection",
             "dim of startcount does match in the bounding box definition");
     }
 
@@ -275,7 +277,8 @@ void QueryVar::LoadSelection(const std::string &startStr,
         this->m_Selection.second; // set at the creation for default
     this->SetSelection(start, count);
     if (!this->IsSelectionValid(shape))
-        throw std::ios_base::failure(
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "query::QueryVar", "LoadSelection",
             "invalid selections for selection of var: " + this->GetVarName());
 }
 

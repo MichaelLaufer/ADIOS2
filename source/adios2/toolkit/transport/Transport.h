@@ -65,7 +65,8 @@ public:
      * @param async
      */
     virtual void Open(const std::string &name, const Mode openMode,
-                      const bool async = false) = 0;
+                      const bool async = false,
+                      const bool directio = false) = 0;
 
     /**
      * Opens transport, possibly asynchronously, in a chain to avoid
@@ -78,7 +79,8 @@ public:
      */
     virtual void OpenChain(const std::string &name, Mode openMode,
                            const helper::Comm &chainComm,
-                           const bool async = false);
+                           const bool async = false,
+                           const bool directio = false);
 
     /**
      * If OS buffered (FILE* or fstream), sets the buffer size
@@ -104,9 +106,6 @@ public:
     virtual void Write(const char *buffer, size_t size,
                        size_t start = MaxSizeT) = 0;
 
-    virtual void IWrite(const char *buffer, size_t size, Status &status,
-                        size_t start = MaxSizeT);
-
     /**
      * Writes to transport, writev version. Note that size is non-const due to
      * the nature of underlying transport libraries
@@ -130,9 +129,6 @@ public:
      */
     virtual void Read(char *buffer, size_t size, size_t start = MaxSizeT) = 0;
 
-    virtual void IRead(char *buffer, size_t size, Status &status,
-                       size_t start = MaxSizeT);
-
     /**
      * Returns the size of current data in transport
      * @return size as size_t
@@ -153,6 +149,8 @@ public:
     virtual void SeekToBegin() = 0;
 
     virtual void Seek(const size_t start = MaxSizeT) = 0;
+
+    virtual void Truncate(const size_t length) = 0;
 
     virtual void MkDir(const std::string &fileName) = 0;
 

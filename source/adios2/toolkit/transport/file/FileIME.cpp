@@ -30,7 +30,7 @@ namespace adios2
 namespace transport
 {
 
-std::atomic_uint FileIME::client_refcount = 0;
+std::atomic_uint FileIME::client_refcount(0);
 
 FileIME::FileIME(helper::Comm const &comm) : Transport("File", "IME", comm)
 {
@@ -71,7 +71,7 @@ FileIME::~FileIME()
 
 /** Note that async mode is unsupported in FileIME. */
 void FileIME::Open(const std::string &name, const Mode openMode,
-                   const bool async)
+                   const bool async, const bool directio)
 {
     /** DEFAULT_IME_FILE_PREFIX is "ime://" */
     m_Name = DEFAULT_IME_FILE_PREFIX;
@@ -154,9 +154,9 @@ void FileIME::Write(const char *buffer, size_t size, size_t start)
                     continue;
                 }
 
-                throw std::ios_base::failure(
-                    "ERROR: couldn't write to file " + m_Name +
-                    ", in call to FileDescriptor Write\n");
+                helper::Throw<std::ios_base::failure>(
+                    "Toolkit", "transport::file::FileIME", "Write",
+                    "couldn't write to file " + m_Name);
             }
 
             buffer += writtenSize;
@@ -171,10 +171,10 @@ void FileIME::Write(const char *buffer, size_t size, size_t start)
 
         if (static_cast<size_t>(newPosition) != start)
         {
-            throw std::ios_base::failure(
-                "ERROR: couldn't move to start position " +
-                std::to_string(start) + " in file " + m_Name +
-                ", in call to IME lseek\n");
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "transport::file::FileIME", "Write",
+                "couldn't move to start position " + std::to_string(start) +
+                    " in file " + m_Name);
         }
     }
 
@@ -214,9 +214,9 @@ void FileIME::Read(char *buffer, size_t size, size_t start)
                     continue;
                 }
 
-                throw std::ios_base::failure("ERROR: couldn't read from file " +
-                                             m_Name +
-                                             ", in call to IME IO read\n");
+                helper::Throw<std::ios_base::failure>(
+                    "Toolkit", "transport::file::FileIME", "Read",
+                    "ERROR: couldn't read from file " + m_Name);
             }
 
             buffer += readSize;
@@ -231,10 +231,10 @@ void FileIME::Read(char *buffer, size_t size, size_t start)
 
         if (static_cast<size_t>(newPosition) != start)
         {
-            throw std::ios_base::failure(
-                "ERROR: couldn't move to start position " +
-                std::to_string(start) + " in file " + m_Name +
-                ", in call to IME lseek errno " + std::to_string(errno) + "\n");
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "transport::file::FileIME", "Read",
+                "couldn't move to start position " + std::to_string(start) +
+                    " in file " + m_Name + ", errno " + std::to_string(errno));
         }
     }
 
@@ -262,8 +262,9 @@ size_t FileIME::GetSize()
     struct stat fileStat;
     if (fstat(m_FileDescriptor, &fileStat) == -1)
     {
-        throw std::ios_base::failure("ERROR: couldn't get size of file " +
-                                     m_Name + "\n");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "transport::file::FileIME", "GetSize",
+            "couldn't get size of file " + m_Name);
     }
     return static_cast<size_t>(fileStat.st_size);
 }
@@ -290,8 +291,9 @@ void FileIME::Close()
 
     if (status == -1)
     {
-        throw std::ios_base::failure("ERROR: couldn't close file " + m_Name +
-                                     ", in call to IME IO close\n");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "transport::file::FileIME", "Close",
+            "ERROR: couldn't close file " + m_Name);
     }
 
     m_IsOpen = false;
@@ -310,7 +312,8 @@ void FileIME::CheckFile(const std::string hint) const
 {
     if (m_FileDescriptor == -1)
     {
-        throw std::ios_base::failure("ERROR: " + hint + "\n");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "transport::file::FileIME", "CheckFile", hint);
     }
 }
 
@@ -319,9 +322,9 @@ void FileIME::SeekToEnd()
     const int status = ime_client_native2_lseek(m_FileDescriptor, 0, SEEK_END);
     if (status == -1)
     {
-        throw std::ios_base::failure(
-            "ERROR: couldn't seek to the end of file " + m_Name +
-            ", in call to IME IO lseek\n");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "transport::file::FileIME", "SeekToEnd",
+            "couldn't seek to the end of file " + m_Name);
     }
 }
 
@@ -330,9 +333,9 @@ void FileIME::SeekToBegin()
     const int status = ime_client_native2_lseek(m_FileDescriptor, 0, SEEK_SET);
     if (status == -1)
     {
-        throw std::ios_base::failure(
-            "ERROR: couldn't seek to the begin of file " + m_Name +
-            ", in call to IME IO lseek\n");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "transport::file::FileIME", "SeekToBegin",
+            "couldn't seek to the begin of file " + m_Name);
     }
 }
 
@@ -344,15 +347,23 @@ void FileIME::Seek(const size_t start)
             ime_client_native2_lseek(m_FileDescriptor, start, SEEK_SET);
         if (status == -1)
         {
-            throw std::ios_base::failure(
-                "ERROR: couldn't seek to offset " + std::to_string(start) +
-                " of file " + m_Name + ", in call to IME IO lseek\n");
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "transport::file::FileIME", "Seek",
+                "couldn't seek to offset " + std::to_string(start) +
+                    " of file " + m_Name);
         }
     }
     else
     {
         SeekToEnd();
     }
+}
+
+void FileIME::Truncate(const size_t length)
+{
+    helper::Throw<std::ios_base::failure>(
+        "Toolkit", "transport::file::FileIME", "Truncate",
+        "IME Truncate is not implemented yet");
 }
 
 void FileIME::MkDir(const std::string &fileName) {}

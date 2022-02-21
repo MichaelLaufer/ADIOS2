@@ -26,6 +26,15 @@ Dims Variable<T>::DoShape(const size_t step) const
 {
     CheckRandomAccess(step, "Shape");
 
+    if (m_Engine)
+    {
+        // see if the engine implements Variable Shape inquiry
+        auto ShapePtr = m_Engine->VarShape(*this, step);
+        if (ShapePtr)
+        {
+            return *ShapePtr;
+        }
+    }
     if (m_FirstStreamingStep && step == adios2::EngineCurrentStep)
     {
         return m_Shape;
@@ -54,10 +63,11 @@ Dims Variable<T>::DoCount() const
         if (itStep == m_AvailableStepBlockIndexOffsets.end())
         {
             auto it = m_AvailableStepBlockIndexOffsets.rbegin();
-            throw std::invalid_argument(
-                "ERROR: current relative step start for variable " + m_Name +
-                " is outside the scope of available steps " +
-                std::to_string(it->first - 1) + " in call to Count\n");
+            helper::Throw<std::invalid_argument>(
+                "Core", "Variable", "DoCount",
+                "current relative step start for variable " + m_Name +
+                    " is outside the scope of available steps " +
+                    std::to_string(it->first - 1) + " in call to Count");
         }
         return itStep->first - 1;
     };
@@ -69,13 +79,16 @@ Dims Variable<T>::DoCount() const
         {
             if (m_BlockID >= MVI->BlocksInfo.size())
             {
-                throw std::invalid_argument(
-                    "ERROR: blockID " + std::to_string(m_BlockID) +
-                    " from SetBlockSelection is out of bounds for available "
-                    "blocks size " +
-                    std::to_string(MVI->BlocksInfo.size()) + " for variable " +
-                    m_Name + " for step " + std::to_string(m_StepsStart) +
-                    ", in call to Variable<T>::Count()");
+                helper::Throw<std::invalid_argument>(
+                    "Core", "Variable", "DoCount",
+                    "blockID " + std::to_string(m_BlockID) +
+                        " from SetBlockSelection is out of bounds for "
+                        "available "
+                        "blocks size " +
+                        std::to_string(MVI->BlocksInfo.size()) +
+                        " for variable " + m_Name + " for step " +
+                        std::to_string(m_StepsStart) +
+                        ", in call to Variable<T>::Count()");
             }
 
             size_t *DimsPtr = (MVI->BlocksInfo)[m_BlockID].Count;
@@ -96,13 +109,14 @@ Dims Variable<T>::DoCount() const
 
         if (m_BlockID >= blocksInfo.size())
         {
-            throw std::invalid_argument(
-                "ERROR: blockID " + std::to_string(m_BlockID) +
-                " from SetBlockSelection is out of bounds for available "
-                "blocks size " +
-                std::to_string(blocksInfo.size()) + " for variable " + m_Name +
-                " for step " + std::to_string(step) +
-                ", in call to Variable<T>::Count()");
+            helper::Throw<std::invalid_argument>(
+                "Core", "Variable", "DoCount",
+                "blockID " + std::to_string(m_BlockID) +
+                    " from SetBlockSelection is out of bounds for available "
+                    "blocks size " +
+                    std::to_string(blocksInfo.size()) + " for variable " +
+                    m_Name + " for step " + std::to_string(step) +
+                    ", in call to Variable<T>::Count()");
         }
 
         return blocksInfo[m_BlockID].Count;
@@ -128,7 +142,7 @@ std::pair<T, T> Variable<T>::DoMinMax(const size_t step) const
     if (m_Engine != nullptr)
     {
 
-        Engine::MinMaxStruct MM;
+        MinMaxStruct MM;
         if (m_Engine->VariableMinMax(*this, step, MM))
         {
             minMax.first = *(T *)&MM.MinUnion;
@@ -153,10 +167,11 @@ std::pair<T, T> Variable<T>::DoMinMax(const size_t step) const
         {
             if (m_BlockID >= blocksInfo.size())
             {
-                throw std::invalid_argument(
-                    "ERROR: BlockID " + std::to_string(m_BlockID) +
-                    " does not exist for LocalArray variable " + m_Name +
-                    ", in call to MinMax, Min or Maxn");
+                helper::Throw<std::invalid_argument>(
+                    "Core", "Variable", "DoMinMax",
+                    "BlockID " + std::to_string(m_BlockID) +
+                        " does not exist for LocalArray variable " + m_Name +
+                        ", in call to MinMax, Min or Maxn");
             }
             minMax.first = blocksInfo[m_BlockID].Min;
             minMax.second = blocksInfo[m_BlockID].Max;
@@ -206,18 +221,22 @@ Variable<T>::DoAllStepsBlocksInfo() const
 {
     if (m_Engine == nullptr)
     {
-        throw std::invalid_argument("ERROR: from variable " + m_Name +
-                                    " function is only valid in read mode, in "
-                                    "call to Variable<T>::AllBlocksInfo\n");
+        helper::Throw<std::invalid_argument>(
+            "Core", "Variable", "DoAllStepsBlocksInfo",
+            "from variable " + m_Name +
+                " function is only valid in read mode, in "
+                "call to Variable<T>::AllBlocksInfo");
     }
 
     if (!m_FirstStreamingStep)
     {
-        throw std::invalid_argument("ERROR: from variable " + m_Name +
-                                    " function is not valid in "
-                                    "random-access read mode "
-                                    "(BeginStep/EndStep), in "
-                                    "call to Variable<T>::AllBlocksInfo\n");
+        helper::Throw<std::invalid_argument>(
+            "Core", "Variable", "DoAllStepsBlocksInfo",
+            "from variable " + m_Name +
+                " function is not valid in "
+                "random-access read mode "
+                "(BeginStep/EndStep), in "
+                "call to Variable<T>::AllBlocksInfo");
     }
 
     return m_Engine->AllRelativeStepsBlocksInfo(*this);
@@ -229,11 +248,12 @@ void Variable<T>::CheckRandomAccess(const size_t step,
 {
     if (!m_FirstStreamingStep && step != DefaultSizeT)
     {
-        throw std::invalid_argument("ERROR: can't pass a step input in "
-                                    "streaming (BeginStep/EndStep)"
-                                    "mode for variable " +
-                                    m_Name +
-                                    ", in call to Variable<T>::" + hint + "\n");
+        helper::Throw<std::invalid_argument>(
+            "Core", "Variable", "CheckRandomAccess",
+            "can't pass a step input in "
+            "streaming (BeginStep/EndStep)"
+            "mode for variable " +
+                m_Name + ", in call to Variable<T>::" + hint);
     }
 }
 
@@ -261,10 +281,10 @@ T &Span<T>::At(const size_t position)
 {
     if (position > m_Size)
     {
-        throw std::invalid_argument(
-            "ERROR: position " + std::to_string(position) +
-            " is out of bounds for span of size " + std::to_string(m_Size) +
-            " , in call to T& Span<T>::At\n");
+        helper::Throw<std::invalid_argument>(
+            "Core", "Variable", "At",
+            "position " + std::to_string(position) +
+                " is out of bounds for span of size " + std::to_string(m_Size));
     }
 
     return (*this)[position];
@@ -275,10 +295,11 @@ const T &Span<T>::At(const size_t position) const
 {
     if (position > m_Size)
     {
-        throw std::invalid_argument(
-            "ERROR: position " + std::to_string(position) +
-            " is out of bounds for span of size " + std::to_string(m_Size) +
-            " , in call to const T& Span<T>::At\n");
+        helper::Throw<std::invalid_argument>(
+            "Core", "Variable", "At",
+            "position " + std::to_string(position) +
+                " is out of bounds for span of size " + std::to_string(m_Size) +
+                " , in call to const T& Span<T>::At");
     }
 
     return (*this)[position];

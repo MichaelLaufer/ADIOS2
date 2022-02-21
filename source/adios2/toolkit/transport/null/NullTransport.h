@@ -35,7 +35,7 @@ public:
     virtual ~NullTransport();
 
     void Open(const std::string &name, const Mode openMode,
-              const bool async = false) override;
+              const bool async = false, const bool directio = false) override;
 
     void SetBuffer(char *buffer, size_t size) override;
 
@@ -57,6 +57,8 @@ public:
     void SeekToBegin() override;
 
     void Seek(const size_t start = MaxSizeT) override;
+
+    void Truncate(const size_t length) override;
 
 protected:
     struct NullTransportImpl;

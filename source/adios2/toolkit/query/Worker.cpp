@@ -1,5 +1,5 @@
 #include "Worker.h"
-//#include "XmlWorker.cpp"
+#include "adios2/helper/adiosFunctions.h"
 
 namespace adios2
 {
@@ -43,8 +43,9 @@ Worker *GetWorker(const std::string &configFile,
 
     if (!fileStream)
     {
-        throw std::ios_base::failure("ERROR: file " + configFile +
-                                     " not found. ");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "query::Worker", "GetWorker",
+            "file " + configFile + " not found");
     }
 
     if (adios2::query::IsFileNameXML(configFile))
@@ -58,8 +59,10 @@ Worker *GetWorker(const std::string &configFile,
         return new JsonWorker(configFile, adiosEngine);
     }
 #endif
-    throw std::invalid_argument("ERROR: Unable to construct xml  query.");
-    // return nullptr;
+    helper::Throw<std::invalid_argument>("Toolkit", "query::Worker",
+                                         "GetWorker",
+                                         "Unable to construct xml query");
+    return nullptr;
 }
 
 QueryVar *Worker::GetBasicVarQuery(adios2::core::IO &currentIO,
@@ -68,7 +71,9 @@ QueryVar *Worker::GetBasicVarQuery(adios2::core::IO &currentIO,
     const DataType varType = currentIO.InquireVariableType(variableName);
     if (varType == DataType::None)
     {
-        std::cerr << "No such variable: " << variableName << std::endl;
+        helper::Log("Query", "Worker", "GetBasicVarQuery",
+                    "No such variable: " + variableName,
+                    helper::LogMode::ERROR);
         return nullptr;
     }
 #define declare_type(T)                                                        \
@@ -96,7 +101,9 @@ void Worker::GetResultCoverage(const adios2::Box<adios2::Dims> &outputRegion,
 
     if (!m_Query->UseOutputRegion(outputRegion))
     {
-        throw std::invalid_argument("Unable to use the output region.");
+        helper::Throw<std::invalid_argument>("Toolkit", "query::Worker",
+                                             "GetResultCoverage",
+                                             "Unable to use the output region");
     }
 
     if (m_Query && m_SourceReader)

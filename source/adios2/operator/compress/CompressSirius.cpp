@@ -27,7 +27,7 @@ int CompressSirius::m_Tiers = 0;
 bool CompressSirius::m_CurrentReadFinished = false;
 
 CompressSirius::CompressSirius(const Params &parameters)
-: Operator("sirius", COMPRESS_SIRIUS, parameters)
+: Operator("sirius", COMPRESS_SIRIUS, "compress", parameters)
 {
     helper::GetParameter(parameters, "Tiers", m_Tiers);
     m_TierBuffersMap.resize(m_Tiers);
@@ -107,7 +107,9 @@ size_t CompressSirius::InverseOperate(const char *bufferIn, const size_t sizeIn,
     }
     else
     {
-        throw("unknown sirius buffer version");
+        helper::Throw<std::runtime_error>("Operator", "CompressSirius",
+                                          "InverseOperate",
+                                          "invalid sirius buffer version");
     }
 
     return 0;

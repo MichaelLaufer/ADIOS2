@@ -12,6 +12,7 @@
 #include "adios2/common/ADIOSMacros.h"
 #include "adios2/core/IO.h"
 #include "adios2/helper/adiosFunctions.h" //CheckIndexRange
+#include "adios2/helper/adiosMath.h"      // SetWithinLimit
 #include "adios2/toolkit/format/buffer/chunk/ChunkV.h"
 #include "adios2/toolkit/format/buffer/malloc/MallocV.h"
 #include "adios2/toolkit/transport/file/FileFStream.h"
@@ -47,8 +48,9 @@ StepStatus BP5Writer::BeginStep(StepMode mode, const float timeoutSeconds)
 {
     if (m_BetweenStepPairs)
     {
-        throw std::logic_error("ERROR: BeginStep() is called a second time "
-                               "without an intervening EndStep()");
+        helper::Throw<std::logic_error>("Engine", "BP5Writer", "BeginStep",
+                                        "BeginStep() is called a second time "
+                                        "without an intervening EndStep()");
     }
 
     Seconds ts = Now() - m_EngineStart;
@@ -94,15 +96,16 @@ StepStatus BP5Writer::BeginStep(StepMode mode, const float timeoutSeconds)
 
     if (m_Parameters.BufferVType == (int)BufferVType::MallocVType)
     {
-        m_BP5Serializer.InitStep(new MallocV("BP5Writer", false,
-                                             m_Parameters.InitialBufferSize,
-                                             m_Parameters.GrowthFactor));
+        m_BP5Serializer.InitStep(new MallocV(
+            "BP5Writer", false, m_BP5Serializer.m_BufferAlign,
+            m_BP5Serializer.m_BufferBlockSize, m_Parameters.InitialBufferSize,
+            m_Parameters.GrowthFactor));
     }
     else
     {
-        m_BP5Serializer.InitStep(new ChunkV("BP5Writer",
-                                            false /* always copy */,
-                                            m_Parameters.BufferChunkSize));
+        m_BP5Serializer.InitStep(new ChunkV(
+            "BP5Writer", false, m_BP5Serializer.m_BufferAlign,
+            m_BP5Serializer.m_BufferBlockSize, m_Parameters.BufferChunkSize));
     }
     m_ThisTimestepDataSize = 0;
 
@@ -117,7 +120,8 @@ void BP5Writer::PerformPuts()
 {
     PERFSTUBS_SCOPED_TIMER("BP5Writer::PerformPuts");
     m_Profiler.Start("PP");
-    m_BP5Serializer.PerformPuts();
+    m_BP5Serializer.PerformPuts(m_Parameters.AsyncWrite ||
+                                m_Parameters.DirectIO);
     m_Profiler.Stop("PP");
     return;
 }
@@ -221,10 +225,11 @@ void BP5Writer::WriteData(format::BufferV *Data)
             WriteData_TwoLevelShm_Async(Data);
             break;
         default:
-            throw std::invalid_argument(
+            helper::Throw<std::invalid_argument>(
+                "Engine", "BP5Writer", "WriteData",
                 "Aggregation method " +
-                std::to_string(m_Parameters.AggregationType) +
-                "is not supported in BP5");
+                    std::to_string(m_Parameters.AggregationType) +
+                    "is not supported in BP5");
         }
     }
     else
@@ -241,10 +246,11 @@ void BP5Writer::WriteData(format::BufferV *Data)
             WriteData_TwoLevelShm(Data);
             break;
         default:
-            throw std::invalid_argument(
+            helper::Throw<std::invalid_argument>(
+                "Engine", "BP5Writer", "WriteData",
                 "Aggregation method " +
-                std::to_string(m_Parameters.AggregationType) +
-                "is not supported in BP5");
+                    std::to_string(m_Parameters.AggregationType) +
+                    "is not supported in BP5");
         }
         delete Data;
     }
@@ -266,8 +272,8 @@ void BP5Writer::WriteData_EveryoneWrites(format::BufferV *Data,
     }
 
     // align to PAGE_SIZE
-    m_DataPos += helper::PaddingToAlignOffset(m_DataPos,
-                                              m_Parameters.FileSystemPageSize);
+    m_DataPos +=
+        helper::PaddingToAlignOffset(m_DataPos, m_Parameters.StripeSize);
     m_StartDataPos = m_DataPos;
 
     if (!SerializedWriters && a->m_Comm.Rank() < a->m_Comm.Size() - 1)
@@ -311,16 +317,32 @@ void BP5Writer::WriteData_EveryoneWrites(format::BufferV *Data,
 void BP5Writer::WriteMetadataFileIndex(uint64_t MetaDataPos,
                                        uint64_t MetaDataSize)
 {
-
     m_FileMetadataManager.FlushFiles();
 
-    std::vector<uint64_t> buf;
-    buf.resize(3 + ((FlushPosSizeInfo.size() * 2) + 1) * m_Comm.Size());
+    std::vector<uint64_t> buf(
+        4 + ((FlushPosSizeInfo.size() * 2) + 1) * m_Comm.Size() + 3 +
+        m_Comm.Size());
+    buf.resize(4 + ((FlushPosSizeInfo.size() * 2) + 1) * m_Comm.Size());
     buf[0] = MetaDataPos;
     buf[1] = MetaDataSize;
     buf[2] = FlushPosSizeInfo.size();
+    buf[3] = static_cast<uint64_t>(m_WriterSubfileMap.size() > 0);
 
-    uint64_t pos = 3;
+    uint64_t pos = 4;
+
+    if (!m_WriterSubfileMap.empty())
+    {
+        // Add Writer to Subfiles Map
+        buf.resize(buf.size() + 3 + m_Comm.Size());
+        buf[4] = static_cast<uint64_t>(m_Comm.Size());
+        buf[5] = static_cast<uint64_t>(m_Aggregator->m_NumAggregators);
+        buf[6] = static_cast<uint64_t>(m_Aggregator->m_SubStreams);
+        pos += 3;
+        std::copy(m_WriterSubfileMap.begin(), m_WriterSubfileMap.end(),
+                  buf.begin() + pos);
+        m_WriterSubfileMap.clear();
+        pos += m_Comm.Size();
+    }
 
     for (int writer = 0; writer < m_Comm.Size(); writer++)
     {
@@ -361,18 +383,22 @@ void BP5Writer::WriteMetadataFileIndex(uint64_t MetaDataPos,
     FlushPosSizeInfo.clear();
 }
 
+void BP5Writer::NotifyEngineAttribute(std::string name, DataType type) noexcept
+{
+    m_MarshalAttributesNecessary = true;
+}
+
 void BP5Writer::MarshalAttributes()
 {
     PERFSTUBS_SCOPED_TIMER_FUNC();
     const auto &attributes = m_IO.GetAttributes();
 
-    const uint32_t attributesCount = static_cast<uint32_t>(attributes.size());
-
     // if there are no new attributes, nothing to do
-    if (attributesCount == m_MarshaledAttributesCount)
+    if (!m_MarshalAttributesNecessary)
     {
         return;
     }
+    m_MarshalAttributesNecessary = false;
 
     for (const auto &attributePair : attributes)
     {
@@ -432,7 +458,6 @@ void BP5Writer::MarshalAttributes()
         ADIOS2_FOREACH_PRIMITIVE_STDTYPE_1ARG(declare_type)
 #undef declare_type
     }
-    m_MarshaledAttributesCount = attributesCount;
 }
 
 void BP5Writer::EndStep()
@@ -445,8 +470,8 @@ void BP5Writer::EndStep()
     MarshalAttributes();
 
     // true: advances step
-    auto TSInfo =
-        m_BP5Serializer.CloseTimestep(m_WriterStep, m_Parameters.AsyncWrite);
+    auto TSInfo = m_BP5Serializer.CloseTimestep(
+        m_WriterStep, m_Parameters.AsyncWrite || m_Parameters.DirectIO);
 
     /* TSInfo includes NewMetaMetaBlocks, the MetaEncodeBuffer, the
      * AttributeEncodeBuffer and the data encode Vector */
@@ -551,68 +576,268 @@ void BP5Writer::Init()
     InitBPBuffer();
 }
 
-#define declare_type(T)                                                        \
-    void BP5Writer::DoPut(Variable<T> &variable,                               \
-                          typename Variable<T>::Span &span,                    \
-                          const bool initialize, const T &value)               \
-    {                                                                          \
-        PERFSTUBS_SCOPED_TIMER("BP5Writer::Put");                              \
-        PutCommonSpan(variable, span, initialize, value);                      \
-    }
-
-ADIOS2_FOREACH_PRIMITIVE_STDTYPE_1ARG(declare_type)
-#undef declare_type
-
-#define declare_type(T)                                                        \
-    void BP5Writer::DoPutSync(Variable<T> &variable, const T *data)            \
-    {                                                                          \
-        PutCommon(variable, data, true);                                       \
-    }                                                                          \
-    void BP5Writer::DoPutDeferred(Variable<T> &variable, const T *data)        \
-    {                                                                          \
-        PutCommon(variable, data, false);                                      \
-    }
-
-ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
-#undef declare_type
-
-#define declare_type(T, L)                                                     \
-    T *BP5Writer::DoBufferData_##L(const int bufferIdx,                        \
-                                   const size_t payloadPosition,               \
-                                   const size_t bufferID) noexcept             \
-    {                                                                          \
-        return reinterpret_cast<T *>(                                          \
-            m_BP5Serializer.GetPtr(bufferIdx, payloadPosition));               \
-    }
-
-ADIOS2_FOREACH_PRIMITVE_STDTYPE_2ARGS(declare_type)
-#undef declare_type
-
 void BP5Writer::InitParameters()
 {
     ParseParams(m_IO, m_Parameters);
     m_WriteToBB = !(m_Parameters.BurstBufferPath.empty());
     m_DrainBB = m_WriteToBB && m_Parameters.BurstBufferDrain;
 
-    if (m_Parameters.NumAggregators > static_cast<unsigned int>(m_Comm.Size()))
+    unsigned int nproc = (unsigned int)m_Comm.Size();
+    m_Parameters.NumAggregators =
+        helper::SetWithinLimit(m_Parameters.NumAggregators, 0U, nproc);
+    m_Parameters.NumSubFiles =
+        helper::SetWithinLimit(m_Parameters.NumSubFiles, 0U, nproc);
+    m_Parameters.AggregatorRatio =
+        helper::SetWithinLimit(m_Parameters.AggregatorRatio, 0U, nproc);
+    if (m_Parameters.NumAggregators == 0)
     {
-        m_Parameters.NumAggregators = static_cast<unsigned int>(m_Comm.Size());
+        if (m_Parameters.AggregatorRatio > 0)
+        {
+            m_Parameters.NumAggregators = helper::SetWithinLimit(
+                nproc / m_Parameters.AggregatorRatio, 0U, nproc);
+        }
+        else if (m_Parameters.NumSubFiles > 0)
+        {
+            m_Parameters.NumAggregators =
+                helper::SetWithinLimit(m_Parameters.NumSubFiles, 0U, nproc);
+        }
+    }
+    m_Parameters.NumSubFiles = helper::SetWithinLimit(
+        m_Parameters.NumSubFiles, 0U, m_Parameters.NumAggregators);
+
+    // Limiting to max 64MB page size
+    m_Parameters.StripeSize =
+        helper::SetWithinLimit(m_Parameters.StripeSize, 0U, 67108864U);
+    if (m_Parameters.StripeSize == 0)
+    {
+        m_Parameters.StripeSize = 4096;
     }
 
-    if (m_Parameters.NumSubFiles > m_Parameters.NumAggregators)
+    if (m_Parameters.DirectIO)
     {
-        m_Parameters.NumSubFiles = m_Parameters.NumAggregators;
+        if (m_Parameters.DirectIOAlignBuffer == 0)
+        {
+            m_Parameters.DirectIOAlignBuffer = m_Parameters.DirectIOAlignOffset;
+        }
+        m_BP5Serializer.m_BufferBlockSize = m_Parameters.DirectIOAlignOffset;
+        m_BP5Serializer.m_BufferAlign = m_Parameters.DirectIOAlignBuffer;
+        if (m_Parameters.StripeSize % m_Parameters.DirectIOAlignOffset)
+        {
+            size_t k =
+                m_Parameters.StripeSize / m_Parameters.DirectIOAlignOffset + 1;
+            m_Parameters.StripeSize = k * m_Parameters.DirectIOAlignOffset;
+        }
+        if (m_Parameters.BufferChunkSize % m_Parameters.DirectIOAlignOffset)
+        {
+            size_t k = m_Parameters.BufferChunkSize /
+                           m_Parameters.DirectIOAlignOffset +
+                       1;
+            m_Parameters.BufferChunkSize = k * m_Parameters.DirectIOAlignOffset;
+        }
+    }
+}
+
+uint64_t BP5Writer::CountStepsInMetadataIndex(format::BufferSTL &bufferSTL)
+{
+    const auto &buffer = bufferSTL.m_Buffer;
+    size_t &position = bufferSTL.m_Position;
+
+    if (buffer.size() < m_IndexHeaderSize)
+    {
+        m_AppendMetadataPos = 0;
+        m_AppendMetaMetadataPos = 0;
+        m_AppendMetadataIndexPos = 0;
+        m_AppendDataPos.resize(m_Aggregator->m_NumAggregators,
+                               0ULL); // safe bet
+        return 0;
     }
 
-    if (m_Parameters.FileSystemPageSize == 0)
+    // Check endinanness
+    position = m_EndianFlagPosition;
+    const uint8_t endianness = helper::ReadValue<uint8_t>(buffer, position);
+    bool IsLittleEndian = (endianness == 0) ? true : false;
+    if (helper::IsLittleEndian() != IsLittleEndian)
     {
-        m_Parameters.FileSystemPageSize = 4096;
+        std::string m = (IsLittleEndian ? "Little" : "Big");
+
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "CountStepsInMetadataIndex",
+            "ADIOS2 BP5 Engine only supports appending with the same "
+            "endianness. The existing file is " +
+                m + "Endian");
     }
-    if (m_Parameters.FileSystemPageSize > 67108864)
+
+    // BP version
+    position = m_BPVersionPosition;
+    uint8_t Version =
+        helper::ReadValue<uint8_t>(buffer, position, IsLittleEndian);
+    if (Version != 5)
     {
-        // Limiting to max 64MB page size
-        m_Parameters.FileSystemPageSize = 67108864;
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "CountStepsInMetadataIndex",
+            "ADIOS2 BP5 Engine only supports bp format "
+            "version 5, found " +
+                std::to_string(Version) + " version");
     }
+
+    position = m_ColumnMajorFlagPosition;
+    const uint8_t columnMajor =
+        helper::ReadValue<uint8_t>(buffer, position, IsLittleEndian);
+    const uint8_t NowColumnMajor =
+        (m_IO.m_ArrayOrder == ArrayOrdering::ColumnMajor) ? 'y' : 'n';
+    if (columnMajor != NowColumnMajor)
+    {
+        std::string m = (columnMajor == 'y' ? "column" : "row");
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "CountStepsInMetadataIndex",
+            "ADIOS2 BP5 Engine only supports appending with the same "
+            "column/row major settings as it was written."
+            " Existing file is " +
+                m + " major");
+    }
+
+    position = m_IndexHeaderSize; // after the header
+    // Just count the steps first
+    unsigned int availableSteps = 0;
+    uint64_t nDataFiles = 0;
+    while (position < buffer.size())
+    {
+        position += 2 * sizeof(uint64_t); // MetadataPos, MetadataSize
+        const uint64_t FlushCount =
+            helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+        const uint64_t hasWriterMap =
+            helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+        if (hasWriterMap)
+        {
+            m_AppendWriterCount =
+                helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+            m_AppendAggregatorCount =
+                helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+            m_AppendSubfileCount =
+                helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+            if (m_AppendSubfileCount > nDataFiles)
+            {
+                nDataFiles = m_AppendSubfileCount;
+            }
+            // jump over writermap
+            position += m_AppendWriterCount * sizeof(uint64_t);
+        }
+
+        position +=
+            sizeof(uint64_t) * m_AppendWriterCount * ((2 * FlushCount) + 1);
+        availableSteps++;
+    }
+
+    unsigned int targetStep = 0;
+
+    if (m_Parameters.AppendAfterSteps < 0)
+    {
+        // -1 means append after last step
+        int s = (int)availableSteps + m_Parameters.AppendAfterSteps + 1;
+        if (s < 0)
+        {
+            s = 0;
+        }
+        targetStep = static_cast<unsigned int>(s);
+    }
+    else
+    {
+        targetStep = static_cast<unsigned int>(m_Parameters.AppendAfterSteps);
+    }
+    if (targetStep > availableSteps)
+    {
+        targetStep = availableSteps;
+    }
+
+    m_AppendDataPos.resize(nDataFiles, 0ULL);
+
+    if (!targetStep)
+    {
+        // append at 0 is like writing new file
+        m_AppendMetadataPos = 0;
+        m_AppendMetaMetadataPos = 0;
+        m_AppendMetadataIndexPos = 0;
+        return 0;
+    }
+
+    m_AppendMetadataPos = MaxSizeT; // size of header
+    m_AppendMetaMetadataPos = MaxSizeT;
+    m_AppendMetadataIndexPos = MaxSizeT;
+    std::fill(m_AppendDataPos.begin(), m_AppendDataPos.end(), MaxSizeT);
+
+    if (targetStep == availableSteps)
+    {
+        // append after existing steps
+        return targetStep;
+    }
+
+    // append but not at 0 and not after existing steps
+    // Read each record now completely to get offsets at step+1
+    position = m_IndexHeaderSize;
+    unsigned int currentStep = 0;
+    std::vector<uint64_t> writerToFileMap;
+    // reading one step beyond target to get correct offsets
+    while (currentStep <= targetStep && position < buffer.size())
+    {
+        m_AppendMetadataIndexPos = position;
+        const uint64_t MetadataPos =
+            helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+        position += sizeof(uint64_t); // MetadataSize
+        const uint64_t FlushCount =
+            helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+        const uint64_t hasWriterMap =
+            helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+        if (hasWriterMap)
+        {
+            m_AppendWriterCount =
+                helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+            m_AppendAggregatorCount =
+                helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+            m_AppendSubfileCount =
+                helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
+
+            // Get the process -> subfile map
+            writerToFileMap.clear();
+            for (uint64_t i = 0; i < m_AppendWriterCount; i++)
+            {
+                const uint64_t subfileIdx = helper::ReadValue<uint64_t>(
+                    buffer, position, IsLittleEndian);
+                writerToFileMap.push_back(subfileIdx);
+            }
+        }
+
+        m_AppendMetadataPos = static_cast<size_t>(MetadataPos);
+
+        if (currentStep == targetStep)
+        {
+            // we need the very first (smallest) write position to each
+            // subfile Offsets and sizes,  2*FlushCount + 1 per writer
+            for (uint64_t i = 0; i < m_AppendWriterCount; i++)
+            {
+                // first flush/write position will do
+                const size_t FirstDataPos =
+                    static_cast<size_t>(helper::ReadValue<uint64_t>(
+                        buffer, position, IsLittleEndian));
+                position +=
+                    sizeof(uint64_t) * 2 * FlushCount; // no need to read
+                /* std::cout << "Writer " << i << " subfile " <<
+                   writerToFileMap[i]  << "  first data loc:" <<
+                   FirstDataPos << std::endl; */
+                if (FirstDataPos < m_AppendDataPos[writerToFileMap[i]])
+                {
+                    m_AppendDataPos[writerToFileMap[i]] = FirstDataPos;
+                }
+            }
+        }
+        else
+        {
+            // jump over all data offsets in this step
+            position +=
+                sizeof(uint64_t) * m_AppendWriterCount * (1 + 2 * FlushCount);
+        }
+        currentStep++;
+    }
+    return targetStep;
 }
 
 void BP5Writer::InitAggregator()
@@ -649,9 +874,7 @@ void BP5Writer::InitAggregator()
                   << " aggr size = " << m_AggregatorTwoLevelShm.m_Size
                   << " rank = " << m_AggregatorTwoLevelShm.m_Rank
                   << " subfile = " << m_AggregatorTwoLevelShm.m_SubStreamIndex
-                  << " type = " << m_Parameters.AggregationType
-
-                  << std::endl;*/
+                  << " type = " << m_Parameters.AggregationType << std::endl;*/
 
         m_IAmDraining = m_AggregatorTwoLevelShm.m_IsMasterAggregator;
         m_IAmWritingData = m_AggregatorTwoLevelShm.m_IsAggregator;
@@ -724,6 +947,7 @@ void BP5Writer::InitTransports()
     m_FileMetadataManager.MkDirsBarrier(m_MetadataFileNames,
                                         m_IO.m_TransportsParameters,
                                         m_Parameters.NodeLocal || m_WriteToBB);
+    /* Create the directories on burst buffer if used */
     if (m_DrainBB)
     {
         /* Create the directories on target anyway by main thread */
@@ -739,6 +963,14 @@ void BP5Writer::InitTransports()
         for (size_t i = 0; i < m_IO.m_TransportsParameters.size(); ++i)
         {
             m_IO.m_TransportsParameters[i]["asyncopen"] = "true";
+        }
+    }
+
+    if (m_Parameters.DirectIO)
+    {
+        for (size_t i = 0; i < m_IO.m_TransportsParameters.size(); ++i)
+        {
+            m_IO.m_TransportsParameters[i]["DirectIO"] = "true";
         }
     }
 
@@ -764,6 +996,11 @@ void BP5Writer::InitTransports()
 
     if (m_Comm.Rank() == 0)
     {
+        // force turn off directio to metadata files
+        for (size_t i = 0; i < m_IO.m_TransportsParameters.size(); ++i)
+        {
+            m_IO.m_TransportsParameters[i]["DirectIO"] = "false";
+        }
         m_FileMetaMetadataManager.OpenFiles(m_MetaMetadataFileNames, m_OpenMode,
                                             m_IO.m_TransportsParameters,
                                             useProfiler);
@@ -812,16 +1049,17 @@ void BP5Writer::MakeHeader(format::BufferSTL &b, const std::string fileType,
     auto &absolutePosition = b.m_AbsolutePosition;
     if (position > 0)
     {
-        throw std::invalid_argument(
-            "ERROR: BP4Serializer::MakeHeader can only be called for an empty "
+        helper::Throw<std::invalid_argument>(
+            "Engine", "BP5Writer", "MakeHeader",
+            "BP4Serializer::MakeHeader can only be called for an empty "
             "buffer. This one for " +
-            fileType + " already has content of " + std::to_string(position) +
-            " bytes.");
+                fileType + " already has content of " +
+                std::to_string(position) + " bytes.");
     }
 
-    if (b.GetAvailableSize() < 64)
+    if (b.GetAvailableSize() < m_IndexHeaderSize)
     {
-        b.Resize(position + 64, "BP4Serializer::MakeHeader " + fileType);
+        b.Resize(m_IndexHeaderSize, "BP4Serializer::MakeHeader " + fileType);
     }
 
     const std::string majorVersion(std::to_string(ADIOS2_VERSION_MAJOR));
@@ -831,7 +1069,8 @@ void BP5Writer::MakeHeader(format::BufferSTL &b, const std::string fileType,
     // byte 0-31: Readable tag
     if (position != m_VersionTagPosition)
     {
-        throw std::runtime_error(
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "MakeHeader",
             "ADIOS Coding ERROR in BP4Serializer::MakeHeader. Version Tag "
             "position mismatch");
     }
@@ -872,8 +1111,9 @@ void BP5Writer::MakeHeader(format::BufferSTL &b, const std::string fileType,
     // byte 36: endianness
     if (position != m_EndianFlagPosition)
     {
-        throw std::runtime_error(
-            "ADIOS Coding ERROR in BP4Serializer::MakeHeader. Endian Flag "
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "MakeHeader",
+            "ADIOS Coding ERROR in BP5Writer::MakeHeader. Endian Flag "
             "position mismatch");
     }
     const uint8_t endianness = helper::IsLittleEndian() ? 0 : 1;
@@ -882,42 +1122,44 @@ void BP5Writer::MakeHeader(format::BufferSTL &b, const std::string fileType,
     // byte 37: BP Version 5
     if (position != m_BPVersionPosition)
     {
-        throw std::runtime_error(
-            "ADIOS Coding ERROR in BP4Serializer::MakeHeader. Active Flag "
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "MakeHeader",
+            "ADIOS Coding ERROR in BP5Writer::MakeHeader. BP Version "
             "position mismatch");
     }
     const uint8_t version = 5;
     helper::CopyToBuffer(buffer, position, &version);
 
-    // byte 38: Active flag (used in Index Table only)
+    // byte 38: BP Minor version 1
+    if (position != m_BPMinorVersionPosition)
+    {
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "MakeHeader",
+            "ADIOS Coding ERROR in BP5Writer::MakeHeader. BP Minor version "
+            "position mismatch");
+    }
+    const uint8_t minorversion = 1;
+    helper::CopyToBuffer(buffer, position, &minorversion);
+
+    // byte 39: Active flag (used in Index Table only)
     if (position != m_ActiveFlagPosition)
     {
-        throw std::runtime_error(
-            "ADIOS Coding ERROR in BP4Serializer::MakeHeader. Active Flag "
+        helper::Throw<std::runtime_error>(
+            "Engine", "BP5Writer", "MakeHeader",
+            "ADIOS Coding ERROR in BP5Writer::MakeHeader. Active Flag "
             "position mismatch");
     }
     const uint8_t activeFlag = (isActive ? 1 : 0);
     helper::CopyToBuffer(buffer, position, &activeFlag);
 
-    // byte 39: Minor file version
-    const uint8_t subversion = 0;
-    helper::CopyToBuffer(buffer, position, &subversion);
-
-    // bytes 40-43 writer count
-    const uint32_t WriterCount = m_Comm.Size();
-    helper::CopyToBuffer(buffer, position, &WriterCount);
-    // bytes 44-47 aggregator count
-    const uint32_t AggregatorCount =
-        static_cast<uint32_t>(m_Aggregator->m_NumAggregators);
-    helper::CopyToBuffer(buffer, position, &AggregatorCount);
-    // byte 48 columnMajor
+    // byte 40 columnMajor
     // write if data is column major in metadata and data
     const uint8_t columnMajor =
         (m_IO.m_ArrayOrder == ArrayOrdering::ColumnMajor) ? 'y' : 'n';
     helper::CopyToBuffer(buffer, position, &columnMajor);
 
-    // byte 49-63: unused
-    position += 15;
+    // byte 41-63: unused
+    position += 23;
     absolutePosition = position;
 }
 
@@ -940,95 +1182,6 @@ void BP5Writer::UpdateActiveFlag(const bool active)
     }
 }
 
-uint64_t BP5Writer::CountStepsInMetadataIndex(format::BufferSTL &bufferSTL)
-{
-    const auto &buffer = bufferSTL.m_Buffer;
-    size_t &position = bufferSTL.m_Position;
-
-    // Check endinanness
-    position = m_EndianFlagPosition;
-    const uint8_t endianness = helper::ReadValue<uint8_t>(buffer, position);
-    bool IsLittleEndian = (endianness == 0) ? true : false;
-#ifndef ADIOS2_HAVE_ENDIAN_REVERSE
-    if (helper::IsLittleEndian() != IsLittleEndian)
-    {
-        throw std::runtime_error(
-            "ERROR: reader found BigEndian bp file, "
-            "this version of ADIOS2 wasn't compiled "
-            "with the cmake flag -DADIOS2_USE_Endian_Reverse=ON "
-            "explicitly, in call to Open\n");
-    }
-#endif
-
-    // BP version
-    position = m_BPVersionPosition;
-    uint8_t Version =
-        helper::ReadValue<uint8_t>(buffer, position, IsLittleEndian);
-    if (Version != 5)
-    {
-        throw std::runtime_error(
-            "ERROR: ADIOS2 BP5 Engine only supports bp format "
-            "version 5, found " +
-            std::to_string(Version) + " version \n");
-    }
-
-    position = m_WriterCountPosition;
-    uint32_t WriterCount =
-        helper::ReadValue<uint32_t>(buffer, position, IsLittleEndian);
-    if ((int)WriterCount != m_Comm.Size())
-    {
-        throw std::runtime_error(
-            "ERROR: ADIOS2 BP5 Engine only supports appending with the same "
-            "number of processes as it was written."
-            " Number of writers in the existing file = " +
-            std::to_string(WriterCount) + "\n");
-    }
-
-    position = m_AggregatorCountPosition;
-    uint32_t AggregatorCount =
-        helper::ReadValue<uint32_t>(buffer, position, IsLittleEndian);
-    if ((size_t)AggregatorCount != m_Aggregator->m_NumAggregators)
-    {
-        throw std::runtime_error(
-            "ERROR: ADIOS2 BP5 Engine only supports appending with the same "
-            "number of aggregators as it was written."
-            " Number of aggregators in the existing file = " +
-            std::to_string(AggregatorCount) +
-            " current number of aggregators = " +
-            std::to_string(m_Aggregator->m_NumAggregators) + "\n");
-    }
-
-    position = m_ColumnMajorFlagPosition;
-    const uint8_t columnMajor =
-        helper::ReadValue<uint8_t>(buffer, position, IsLittleEndian);
-    const uint8_t NowColumnMajor =
-        (m_IO.m_ArrayOrder == ArrayOrdering::ColumnMajor) ? 'y' : 'n';
-    if (columnMajor != NowColumnMajor)
-    {
-        std::string m = (columnMajor == 'y' ? "column" : "row");
-        throw std::runtime_error(
-            "ERROR: ADIOS2 BP5 Engine only supports appending with the same "
-            "column/row major settings as it was written."
-            " Existing file is " +
-            m + " major\n");
-    }
-
-    // move position to first row
-    position = 64 + WriterCount * sizeof(uint64_t);
-
-    // Read each record now
-    uint64_t currentStep = 0;
-    while (position < buffer.size())
-    {
-        position += 2 * sizeof(uint64_t); // MetadataPos, MetadataSize
-        const uint64_t FlushCount =
-            helper::ReadValue<uint64_t>(buffer, position, IsLittleEndian);
-        position += sizeof(uint64_t) * WriterCount * ((2 * FlushCount) + 1);
-        currentStep++;
-    }
-    return currentStep;
-}
-
 void BP5Writer::InitBPBuffer()
 {
     if (m_OpenMode == Mode::Append)
@@ -1049,56 +1202,95 @@ void BP5Writer::InitBPBuffer()
         }
         m_Comm.BroadcastVector(preMetadataIndex.m_Buffer);
         m_WriterStep = CountStepsInMetadataIndex(preMetadataIndex);
-        if (m_WriterStep > 0)
+
+        // truncate and seek
+        if (m_Aggregator->m_IsAggregator)
         {
-            if (m_Aggregator->m_IsAggregator)
+            const size_t off = m_AppendDataPos[m_Aggregator->m_SubStreamIndex];
+            if (off < MaxSizeT)
+            {
+                m_FileDataManager.Truncate(off);
+                // Seek is needed since truncate does not seek.
+                // SeekTo instead of SeetToFileEnd in case a transport
+                // does not support actual truncate.
+                m_FileDataManager.SeekTo(off);
+                m_DataPos = off;
+            }
+            else
             {
                 m_DataPos = m_FileDataManager.GetFileSize(0);
             }
+        }
 
-            if (m_Comm.Rank() == 0)
+        if (m_Comm.Rank() == 0)
+        {
+            // Truncate existing metadata file
+            if (m_AppendMetadataPos < MaxSizeT)
             {
-                // Get the size of existing metametadata file
-                m_BP5Serializer.m_PreMetaMetadataFileLength =
-                    m_FileMetaMetadataManager.GetFileSize(0);
-                // Get the size of existing metadata file
+                m_MetaDataPos = m_AppendMetadataPos;
+                m_FileMetadataManager.Truncate(m_MetaDataPos);
+                m_FileMetadataManager.SeekTo(m_MetaDataPos);
+            }
+            else
+            {
                 m_MetaDataPos = m_FileMetadataManager.GetFileSize(0);
+                m_FileMetadataManager.SeekToFileEnd();
+            }
+
+            // Truncate existing meta-meta file
+            if (m_AppendMetaMetadataPos < MaxSizeT)
+            {
+                m_FileMetaMetadataManager.Truncate(m_AppendMetaMetadataPos);
+                m_FileMetaMetadataManager.SeekTo(m_AppendMetaMetadataPos);
+            }
+            else
+            {
+                m_FileMetadataIndexManager.SeekToFileEnd();
+            }
+
+            // Set the flag in the header of metadata index table to 1 again
+            // to indicate a new run begins
+            UpdateActiveFlag(true);
+
+            // Truncate existing index file
+            if (m_AppendMetadataIndexPos < MaxSizeT)
+            {
+                m_FileMetadataIndexManager.Truncate(m_AppendMetadataIndexPos);
+                m_FileMetadataIndexManager.SeekTo(m_AppendMetadataIndexPos);
+            }
+            else
+            {
+                m_FileMetadataIndexManager.SeekToFileEnd();
             }
         }
+        m_AppendDataPos.clear();
     }
 
     if (!m_WriterStep)
     {
-        /* This is a new file.
+        /* This is a new file or append at 0
          * Make headers in data buffer and metadata buffer (but do not write
          * them yet so that Open() can stay free of writing to disk)
          */
-        const uint64_t a =
-            static_cast<uint64_t>(m_Aggregator->m_SubStreamIndex);
-        std::vector<uint64_t> Assignment = m_Comm.GatherValues(a, 0);
         if (m_Comm.Rank() == 0)
         {
             format::BufferSTL b;
             MakeHeader(b, "Metadata", false);
+            m_FileMetadataManager.SeekToFileBegin();
             m_FileMetadataManager.WriteFiles(b.m_Buffer.data(), b.m_Position);
             m_MetaDataPos = b.m_Position;
             format::BufferSTL bi;
             MakeHeader(bi, "Index Table", true);
+            m_FileMetadataIndexManager.SeekToFileBegin();
             m_FileMetadataIndexManager.WriteFiles(bi.m_Buffer.data(),
                                                   bi.m_Position);
-            // where each rank's data will end up
-            m_FileMetadataIndexManager.WriteFiles((char *)Assignment.data(),
-                                                  sizeof(Assignment[0]) *
-                                                      Assignment.size());
+            m_FileMetaMetadataManager.SeekToFileBegin();
         }
-    }
-    else
-    {
-        if (m_Comm.Rank() == 0)
+        // last attempt to clean up datafile if called with append mode,
+        // data existed but index was missing
+        if (m_Aggregator->m_IsAggregator)
         {
-            // Set the flag in the header of metadata index table to 1 again
-            // to indicate a new run begins
-            UpdateActiveFlag(true);
+            m_FileDataManager.SeekTo(0);
         }
     }
 
@@ -1106,11 +1298,19 @@ void BP5Writer::InitBPBuffer()
     {
         m_WriterDataPos.resize(m_Comm.Size());
     }
-}
 
-void BP5Writer::NotifyEngineAttribute(std::string name, DataType type) noexcept
-{
-    m_MarshaledAttributesCount = 0;
+    if (!m_WriterStep ||
+        m_AppendWriterCount != static_cast<unsigned int>(m_Comm.Size()) ||
+        m_AppendAggregatorCount !=
+            static_cast<unsigned int>(m_Aggregator->m_NumAggregators) ||
+        m_AppendSubfileCount !=
+            static_cast<unsigned int>(m_Aggregator->m_SubStreams))
+    {
+        // new Writer Map is needed, generate now, write later
+        const uint64_t a =
+            static_cast<uint64_t>(m_Aggregator->m_SubStreamIndex);
+        m_WriterSubfileMap = m_Comm.GatherValues(a, 0);
+    }
 }
 
 void BP5Writer::EnterComputationBlock() noexcept
@@ -1151,14 +1351,19 @@ void BP5Writer::FlushData(const bool isFinal)
     if (m_Parameters.BufferVType == (int)BufferVType::MallocVType)
     {
         DataBuf = m_BP5Serializer.ReinitStepData(
-            new MallocV("BP5Writer", false, m_Parameters.InitialBufferSize,
-                        m_Parameters.GrowthFactor));
+            new MallocV("BP5Writer", false, m_BP5Serializer.m_BufferAlign,
+                        m_BP5Serializer.m_BufferBlockSize,
+                        m_Parameters.InitialBufferSize,
+                        m_Parameters.GrowthFactor),
+            m_Parameters.AsyncWrite || m_Parameters.DirectIO);
     }
     else
     {
         DataBuf = m_BP5Serializer.ReinitStepData(
-            new ChunkV("BP5Writer", false /* always copy */,
-                       m_Parameters.BufferChunkSize));
+            new ChunkV("BP5Writer", false, m_BP5Serializer.m_BufferAlign,
+                       m_BP5Serializer.m_BufferBlockSize,
+                       m_Parameters.BufferChunkSize),
+            m_Parameters.AsyncWrite || m_Parameters.DirectIO);
     }
 
     auto databufsize = DataBuf->Size();
@@ -1296,7 +1501,8 @@ void BP5Writer::FlushProfiler()
         std::string profileFileName;
         if (m_DrainBB)
         {
-            // auto bpTargetNames = m_BP4Serializer.GetBPBaseNames({m_Name});
+            // auto bpTargetNames =
+            // m_BP4Serializer.GetBPBaseNames({m_Name});
             std::vector<std::string> bpTargetNames = {m_Name};
             if (fileTransportIdx > -1)
             {
@@ -1313,7 +1519,8 @@ void BP5Writer::FlushProfiler()
         else
         {
             transport::FileFStream profilingJSONStream(m_Comm);
-            // auto bpBaseNames = m_BP4Serializer.GetBPBaseNames({m_BBName});
+            // auto bpBaseNames =
+            // m_BP4Serializer.GetBPBaseNames({m_BBName});
             std::vector<std::string> bpBaseNames = {m_Name};
             if (fileTransportIdx > -1)
             {
@@ -1356,6 +1563,43 @@ size_t BP5Writer::DebugGetDataBufferSize() const
 {
     return m_BP5Serializer.DebugGetDataBufferSize();
 }
+
+#define declare_type(T)                                                        \
+    void BP5Writer::DoPut(Variable<T> &variable,                               \
+                          typename Variable<T>::Span &span,                    \
+                          const bool initialize, const T &value)               \
+    {                                                                          \
+        PERFSTUBS_SCOPED_TIMER("BP5Writer::Put");                              \
+        PutCommonSpan(variable, span, initialize, value);                      \
+    }
+
+ADIOS2_FOREACH_PRIMITIVE_STDTYPE_1ARG(declare_type)
+#undef declare_type
+
+#define declare_type(T)                                                        \
+    void BP5Writer::DoPutSync(Variable<T> &variable, const T *data)            \
+    {                                                                          \
+        PutCommon(variable, data, true);                                       \
+    }                                                                          \
+    void BP5Writer::DoPutDeferred(Variable<T> &variable, const T *data)        \
+    {                                                                          \
+        PutCommon(variable, data, false);                                      \
+    }
+
+ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
+#undef declare_type
+
+#define declare_type(T, L)                                                     \
+    T *BP5Writer::DoBufferData_##L(const int bufferIdx,                        \
+                                   const size_t payloadPosition,               \
+                                   const size_t bufferID) noexcept             \
+    {                                                                          \
+        return reinterpret_cast<T *>(                                          \
+            m_BP5Serializer.GetPtr(bufferIdx, payloadPosition));               \
+    }
+
+ADIOS2_FOREACH_PRIMITVE_STDTYPE_2ARGS(declare_type)
+#undef declare_type
 
 } // end namespace engine
 } // end namespace core

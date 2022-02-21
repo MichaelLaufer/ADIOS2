@@ -24,7 +24,8 @@ Stream::Stream(const std::string &name, const Mode mode, helper::Comm comm,
   m_IO(&m_ADIOS->DeclareIO(name)), m_Name(name), m_Mode(mode),
   m_EngineType(engineType)
 {
-    if (mode == adios2::Mode::Read)
+    if ((mode == adios2::Mode::Read) ||
+        (mode == adios2::Mode::ReadRandomAccess))
     {
         CheckOpen();
     }
@@ -42,7 +43,8 @@ Stream::Stream(const std::string &name, const Mode mode, helper::Comm comm,
 : m_ADIOS(std::make_shared<ADIOS>(configFile, std::move(comm), hostLanguage)),
   m_IO(&m_ADIOS->DeclareIO(ioInConfigFile)), m_Name(name), m_Mode(mode)
 {
-    if (mode == adios2::Mode::Read)
+    if ((mode == adios2::Mode::Read) ||
+        (mode == adios2::Mode::ReadRandomAccess))
     {
         CheckOpen();
     }
@@ -89,10 +91,12 @@ void Stream::EndStep()
     }
     else
     {
-        throw std::invalid_argument("ERROR: stream " + m_Name +
-                                    " calling end step function twice (check "
-                                    "if a write function calls it) or "
-                                    "invalid stream\n");
+        helper::Throw<std::invalid_argument>(
+            "Core", "Stream", "EndStep",
+            "stream " + m_Name +
+                " calling end step function twice (check "
+                "if a write function calls it) or "
+                "invalid stream");
     }
 }
 
@@ -115,9 +119,11 @@ size_t Stream::CurrentStep() const
 
     if (m_Engine == nullptr)
     {
-        throw std::invalid_argument("ERROR: stream with name " + m_Name +
-                                    "is invalid or closed, in call "
-                                    "to CurrentStep");
+        helper::Throw<std::invalid_argument>(
+            "Core", "Stream", "CurrentStep",
+            "stream with name " + m_Name +
+                "is invalid or closed, in call "
+                "to CurrentStep");
     }
 
     return m_Engine->CurrentStep();

@@ -69,7 +69,9 @@ public:
         m_Type = type;
         if (key < 0)
         {
-            throw std::ios_base::failure("ERROR: HDF5 failure detected.");
+            helper::Throw<std::ios_base::failure>(
+                "Toolkit", "interop::hdf5::HDF5Common::HDF5TypeGuard",
+                "HDF5TypeGuard", "HDF5 failure detected");
         }
     }
 
@@ -273,13 +275,6 @@ private:
     // requirement in functions Guard this by load vars in beginStep
     bool m_IdleWriterOn = false;
 };
-
-// Explicit declaration of the public template methods
-#define declare_template_instantiation(T)                                      \
-    extern template void HDF5Common::Write(core::Variable<T> &variable,        \
-                                           const T *value);
-ADIOS2_FOREACH_STDTYPE_1ARG(declare_template_instantiation)
-#undef declare_template_instantiation
 
 } // end namespace interop
 } // end namespace adios

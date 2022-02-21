@@ -142,6 +142,13 @@ ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
         return nullptr;                                                        \
     }
 
+void Engine::DoGetAbsoluteSteps(const VariableBase &variable,
+                                std::vector<size_t> &keys) const
+{
+    ThrowUp("DoGetAbsoluteSteps");
+    return;
+}
+
 ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
 #undef declare_type
 
@@ -165,12 +172,6 @@ ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
     {                                                                          \
         ThrowUp("DoBlocksInfo");                                               \
         return std::vector<typename Variable<T>::BPInfo>();                    \
-    }                                                                          \
-    std::vector<size_t> Engine::DoGetAbsoluteSteps(                            \
-        const Variable<T> &variable) const                                     \
-    {                                                                          \
-        ThrowUp("DoGetAbsoluteSteps");                                         \
-        return std::vector<size_t>();                                          \
     }
 
 ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
@@ -197,9 +198,9 @@ size_t Engine::DoSteps() const
 // PRIVATE
 void Engine::ThrowUp(const std::string function) const
 {
-    throw std::invalid_argument("ERROR: Engine derived class " + m_EngineType +
-                                " doesn't implement function " + function +
-                                "\n");
+    helper::Throw<std::invalid_argument>("Core", "Engine", "ThrowUp",
+                                         "Engine " + m_EngineType +
+                                             " does not support " + function);
 }
 
 void Engine::CheckOpenModes(const std::set<Mode> &modes,
@@ -207,8 +208,9 @@ void Engine::CheckOpenModes(const std::set<Mode> &modes,
 {
     if (modes.count(m_OpenMode) == 0)
     {
-        throw std::invalid_argument(
-            "ERROR: Engine Open Mode not valid for function, " + hint);
+        helper::Throw<std::invalid_argument>("Core", "Engine", "CheckOpenModes",
+                                             "Engine open mode not valid for " +
+                                                 hint);
     }
 }
 

@@ -9,6 +9,7 @@
  */
 
 #include "Signature2.h"
+#include "adios2/helper/adiosLog.h"
 
 namespace adios2
 {
@@ -22,7 +23,7 @@ Signature2::Signature2(
                              const std::string &, const size_t, const Dims &,
                              const Dims &, const Dims &)> &function,
     const Params &parameters)
-: Operator("Signature2", Operator::CALLBACK_SIGNATURE2, parameters),
+: Operator("Signature2", Operator::CALLBACK_SIGNATURE2, "callback", parameters),
   m_Function(function)
 {
 }
@@ -38,8 +39,9 @@ void Signature2::RunCallback2(void *arg1, const std::string &arg2,
     }
     else
     {
-        throw std::runtime_error(
-            "ERROR: callback function of Signature2 type failed\n");
+        helper::Throw<std::runtime_error>(
+            "Operator", "Signature2", "RunCallback2",
+            "callback function of Signature2 type failed");
     }
 }
 

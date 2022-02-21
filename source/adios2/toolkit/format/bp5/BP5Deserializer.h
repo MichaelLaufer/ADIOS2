@@ -33,8 +33,8 @@ class BP5Deserializer : virtual public BP5Base
 {
 
 public:
-    BP5Deserializer(int WriterCount, bool WriterIsRowMajor,
-                    bool ReaderIsRowMajor, bool RandomAccessMode = false);
+    BP5Deserializer(bool WriterIsRowMajor, bool ReaderIsRowMajor,
+                    bool RandomAccessMode = false);
 
     ~BP5Deserializer();
 
@@ -52,7 +52,7 @@ public:
                          size_t WriterRank, size_t Step = SIZE_MAX);
     void InstallAttributeData(void *AttributeBlock, size_t BlockLen,
                               size_t Step = SIZE_MAX);
-    void SetupForTimestep(size_t t);
+    void SetupForStep(size_t Step, size_t WriterCount);
     // return from QueueGet is true if a sync is needed to fill the data
     bool QueueGet(core::VariableBase &variable, void *DestData);
     bool QueueGetSingle(core::VariableBase &variable, void *DestData,
@@ -61,15 +61,17 @@ public:
     std::vector<ReadRequest> GenerateReadRequests();
     void FinalizeGets(std::vector<ReadRequest>);
 
-    Engine::MinVarInfo *AllRelativeStepsMinBlocksInfo(const VariableBase &var);
-    Engine::MinVarInfo *AllStepsMinBlocksInfo(const VariableBase &var);
-    Engine::MinVarInfo *MinBlocksInfo(const VariableBase &Var,
-                                      const size_t Step);
+    MinVarInfo *AllRelativeStepsMinBlocksInfo(const VariableBase &var);
+    MinVarInfo *AllStepsMinBlocksInfo(const VariableBase &var);
+    MinVarInfo *MinBlocksInfo(const VariableBase &Var, const size_t Step);
+    Dims *VarShape(const VariableBase &, const size_t Step) const;
     bool VariableMinMax(const VariableBase &var, const size_t Step,
-                        Engine::MinMaxStruct &MinMax);
+                        MinMaxStruct &MinMax);
+    void GetAbsoluteSteps(const VariableBase &variable,
+                          std::vector<size_t> &keys) const;
 
-    bool m_WriterIsRowMajor = 1;
-    bool m_ReaderIsRowMajor = 1;
+    const bool m_WriterIsRowMajor;
+    const bool m_ReaderIsRowMajor;
     core::Engine *m_Engine = NULL;
 
 private:
@@ -88,7 +90,8 @@ private:
         size_t *GlobalDims = NULL;
         size_t LastTSAdded = SIZE_MAX;
         size_t FirstTSSeen = SIZE_MAX;
-        size_t LastShapeAdded = SIZE_MAX;
+        size_t LastStepAdded = SIZE_MAX;
+        std::vector<size_t> AbsStepFromRel; // per relative step vector
         std::vector<size_t> PerWriterMetaFieldOffset;
         std::vector<size_t> PerWriterBlockStart;
     };
@@ -126,8 +129,16 @@ private:
     };
 
     FFSContext ReaderFFSContext;
-    size_t m_WriterCohortSize;
-    bool m_RandomAccessMode;
+
+    const bool m_RandomAccessMode;
+
+    std::vector<size_t> m_WriterCohortSize; // per step, in random mode
+    size_t m_CurrentWriterCohortSize;       // valid in streaming mode
+    // return the number of writers
+    // m_CurrentWriterCohortSize in streaming mode
+    // m_WriterCohortSize[Step] in random access mode
+    size_t WriterCohortSize(size_t Step) const;
+
     size_t m_LastAttrStep = MaxSizeT; // invalid timestep for start
 
     std::unordered_map<std::string, BP5VarRec *> VarByName;
@@ -150,7 +161,7 @@ private:
     bool NameIndicatesArray(const char *Name);
     bool NameIndicatesAttrArray(const char *Name);
     DataType TranslateFFSType2ADIOS(const char *Type, int size);
-    BP5VarRec *LookupVarByKey(void *Key);
+    BP5VarRec *LookupVarByKey(void *Key) const;
     BP5VarRec *LookupVarByName(const char *Name);
     BP5VarRec *CreateVarRec(const char *ArrayName);
     void ReverseDimensions(size_t *Dimensions, int count, int times);
@@ -171,20 +182,20 @@ private:
     bool GetSingleValueFromMetadata(core::VariableBase &variable,
                                     BP5VarRec *VarRec, void *DestData,
                                     size_t Step, size_t WriterRank);
-    void ExtractSelectionFromPartialRM(int ElementSize, size_t Dims,
-                                       const size_t *GlobalDims,
-                                       const size_t *PartialOffsets,
-                                       const size_t *PartialCounts,
-                                       const size_t *SelectionOffsets,
-                                       const size_t *SelectionCounts,
-                                       const char *InData, char *OutData);
-    void ExtractSelectionFromPartialCM(int ElementSize, size_t Dims,
-                                       const size_t *GlobalDims,
-                                       const size_t *PartialOffsets,
-                                       const size_t *PartialCounts,
-                                       const size_t *SelectionOffsets,
-                                       const size_t *SelectionCounts,
-                                       const char *InData, char *OutData);
+    void MemCopyData(char *OutData, const char *InData, size_t Size,
+                     MemorySpace MemSpace);
+    void ExtractSelectionFromPartialRM(
+        int ElementSize, size_t Dims, const size_t *GlobalDims,
+        const size_t *PartialOffsets, const size_t *PartialCounts,
+        const size_t *SelectionOffsets, const size_t *SelectionCounts,
+        const char *InData, char *OutData,
+        MemorySpace MemSpace = MemorySpace::Host);
+    void ExtractSelectionFromPartialCM(
+        int ElementSize, size_t Dims, const size_t *GlobalDims,
+        const size_t *PartialOffsets, const size_t *PartialCounts,
+        const size_t *SelectionOffsets, const size_t *SelectionCounts,
+        const char *InData, char *OutData,
+        MemorySpace MemSpace = MemorySpace::Host);
 
     enum RequestTypeEnum
     {
@@ -200,11 +211,13 @@ private:
         size_t BlockID;
         Dims Start;
         Dims Count;
+        MemorySpace MemSpace;
         void *Data;
     };
     std::vector<BP5ArrayRequest> PendingRequests;
     bool NeedWriter(BP5ArrayRequest Req, size_t i, size_t &NodeFirst);
-    void *GetMetadataBase(BP5VarRec *VarRec, size_t Step, size_t WriterRank);
+    void *GetMetadataBase(BP5VarRec *VarRec, size_t Step,
+                          size_t WriterRank) const;
     size_t CurTimestep = 0;
 };
 

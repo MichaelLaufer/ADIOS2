@@ -177,12 +177,13 @@ std::vector<std::string> TransportMan::GetFilesBaseNames(
         {
             if (itType->second.count(name) == 1)
             {
-                throw std::invalid_argument(
-                    "ERROR: two IO AddTransport of the same type can't "
+                helper::Throw<std::invalid_argument>(
+                    "Toolkit", "TransportMan", "OpenFileID",
+                    "two IO AddTransport of the same type can't "
                     "have the same name : " +
-                    name +
-                    ", use Name=value parameter, in "
-                    "call to Open");
+                        name +
+                        ", use Name=value parameter, in "
+                        "call to Open");
             }
         }
         typeTransportNames[type].insert(name);
@@ -376,6 +377,28 @@ void TransportMan::SeekTo(const size_t start, const int transportIndex)
     }
 }
 
+void TransportMan::Truncate(const size_t length, const int transportIndex)
+{
+    if (transportIndex == -1)
+    {
+        for (auto &transportPair : m_Transports)
+        {
+            auto &transport = transportPair.second;
+            if (transport->m_Type == "File")
+            {
+                transport->Truncate(length);
+            }
+        }
+    }
+    else
+    {
+        auto itTransport = m_Transports.find(transportIndex);
+        CheckFile(itTransport, ", in call to Truncate with index " +
+                                   std::to_string(transportIndex));
+        itTransport->second->Truncate(length);
+    }
+}
+
 size_t TransportMan::GetFileSize(const size_t transportIndex) const
 {
     auto itTransport = m_Transports.find(transportIndex);
@@ -509,10 +532,11 @@ std::shared_ptr<Transport> TransportMan::OpenFileTransport(
             std::stringstream ss(bufferedValueStr);
             if (!(ss >> std::boolalpha >> bufferedValue))
             {
-                throw std::invalid_argument(
-                    "ERROR: invalid value for \"buffered\" transport "
+                helper::Throw<std::invalid_argument>(
+                    "Toolkit", "TransportMan", "OpenFileTransport",
+                    "invalid value for \"buffered\" transport "
                     "parameter: " +
-                    bufferedValueStr);
+                        bufferedValueStr);
             }
         }
         return bufferedValue;
@@ -542,9 +566,9 @@ std::shared_ptr<Transport> TransportMan::OpenFileTransport(
             transport = std::make_shared<transport::FilePOSIX>(m_Comm);
             if (lf_GetBuffered("false"))
             {
-                throw std::invalid_argument(
-                    "ERROR: " + library +
-                    " transport does not support buffered I/O.");
+                helper::Throw<std::invalid_argument>(
+                    "Toolkit", "TransportMan", "OpenFileTransport",
+                    library + " transport does not support buffered I/O.");
             }
         }
 #endif
@@ -554,9 +578,9 @@ std::shared_ptr<Transport> TransportMan::OpenFileTransport(
             transport = std::make_shared<transport::FileDaos>(m_Comm);
             if (lf_GetBuffered("false"))
             {
-                throw std::invalid_argument(
-                    "ERROR: " + library +
-                    " transport does not support buffered I/O.");
+                helper::Throw<std::invalid_argument>(
+                    "Toolkit", "TransportMan", "OpenFileTransport",
+                    library + " transport does not support buffered I/O.");
             }
         }
 #endif
@@ -571,15 +595,16 @@ std::shared_ptr<Transport> TransportMan::OpenFileTransport(
             transport = std::make_shared<transport::NullTransport>(m_Comm);
             if (lf_GetBuffered("false"))
             {
-                throw std::invalid_argument(
-                    "ERROR: " + library +
-                    " transport does not support buffered I/O.");
+                helper::Throw<std::invalid_argument>(
+                    "Toolkit", "TransportMan", "OpenFileTransport",
+                    library + " transport does not support buffered I/O.");
             }
         }
         else
         {
-            throw std::invalid_argument(
-                "ERROR: invalid IO AddTransport library " + library);
+            helper::Throw<std::invalid_argument>(
+                "Toolkit", "TransportMan", "OpenFileTransport",
+                "invalid IO AddTransport library " + library);
         }
     };
 
@@ -607,6 +632,13 @@ std::shared_ptr<Transport> TransportMan::OpenFileTransport(
         return helper::StringTo<bool>(AsyncOpen, "");
     };
 
+    auto lf_GetDirectIO = [&](const std::string defaultValue,
+                              const Params &parameters) -> bool {
+        std::string directio = defaultValue;
+        helper::SetParameterValue("DirectIO", parameters, directio);
+        return helper::StringTo<bool>(directio, "");
+    };
+
     // BODY OF FUNCTION starts here
     std::shared_ptr<Transport> transport;
     lf_SetFileTransport(lf_GetLibrary(DefaultFileLibrary, parameters),
@@ -625,12 +657,14 @@ std::shared_ptr<Transport> TransportMan::OpenFileTransport(
     if (useComm)
     {
         transport->OpenChain(fileName, openMode, chainComm,
-                             lf_GetAsyncOpen("true", parameters));
+                             lf_GetAsyncOpen("false", parameters),
+                             lf_GetDirectIO("false", parameters));
     }
     else
     {
         transport->Open(fileName, openMode,
-                        lf_GetAsyncOpen("false", parameters));
+                        lf_GetAsyncOpen("false", parameters),
+                        lf_GetDirectIO("false", parameters));
     }
     return transport;
 }
@@ -642,14 +676,17 @@ void TransportMan::CheckFile(
 {
     if (itTransport == m_Transports.end())
     {
-        throw std::invalid_argument("ERROR: invalid transport " + hint + "\n");
+        helper::Throw<std::invalid_argument>("Toolkit", "TransportMan",
+                                             "CheckFile",
+                                             "invalid transport " + hint);
     }
 
     if (itTransport->second->m_Type != "File")
     {
-        throw std::invalid_argument("ERROR: invalid type " +
-                                    itTransport->second->m_Library +
-                                    ", must be file " + hint + "\n");
+        helper::Throw<std::invalid_argument>(
+            "Toolkit", "TransportMan", "CheckFile",
+            "invalid type " + itTransport->second->m_Library +
+                ", must be file " + hint);
     }
 }
 

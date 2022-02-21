@@ -4,15 +4,16 @@
  *
  * CompressMGARD.cpp :
  *
- *  Created on: Aug 3, 2018
- *      Author: William F Godoy godoywf@ornl.gov
+ *  Created on: Dec 1, 2021
+ *      Author: Jason Wang jason.ruonan.wang@gmail.com
  */
 
 #include "CompressMGARD.h"
+#include "CompressNull.h"
 #include "adios2/helper/adiosFunctions.h"
-#include <MGARDConfig.h>
 #include <cstring>
-#include <mgard_api.h>
+#include <mgard/MGARDConfig.hpp>
+#include <mgard/compress_x.hpp>
 
 namespace adios2
 {
@@ -22,7 +23,7 @@ namespace compress
 {
 
 CompressMGARD::CompressMGARD(const Params &parameters)
-: Operator("mgard", COMPRESS_MGARD, parameters)
+: Operator("mgard", COMPRESS_MGARD, "compress", parameters)
 {
 }
 
@@ -35,11 +36,20 @@ size_t CompressMGARD::Operate(const char *dataIn, const Dims &blockStart,
 
     MakeCommonHeader(bufferOut, bufferOutOffset, bufferVersion);
 
-    const size_t ndims = blockCount.size();
+    Dims convertedDims = ConvertDims(blockCount, type, 3);
+
+    const size_t ndims = convertedDims.size();
+    if (ndims > 5)
+    {
+        helper::Throw<std::invalid_argument>(
+            "Operator", "CompressMGARD", "Operate",
+            "MGARD does not support data in " + std::to_string(ndims) +
+                " dimensions");
+    }
 
     // mgard V1 metadata
     PutParameter(bufferOut, bufferOutOffset, ndims);
-    for (const auto &d : blockCount)
+    for (const auto &d : convertedDims)
     {
         PutParameter(bufferOut, bufferOutOffset, d);
     }
@@ -52,38 +62,47 @@ size_t CompressMGARD::Operate(const char *dataIn, const Dims &blockStart,
                  static_cast<uint8_t>(MGARD_VERSION_PATCH));
     // mgard V1 metadata end
 
-    if (ndims > 3)
-    {
-        throw std::invalid_argument("ERROR: ADIOS2 MGARD compression: no more "
-                                    "than 3-dimensions is supported.\n");
-    }
-
     // set type
-    int mgardType = -1;
-    if (type == helper::GetDataType<double>())
+    mgard_x::data_type mgardType;
+    if (type == helper::GetDataType<float>())
     {
-        mgardType = 1;
+        mgardType = mgard_x::data_type::Float;
+    }
+    else if (type == helper::GetDataType<double>())
+    {
+        mgardType = mgard_x::data_type::Double;
+    }
+    else if (type == helper::GetDataType<std::complex<float>>())
+    {
+        mgardType = mgard_x::data_type::Float;
+    }
+    else if (type == helper::GetDataType<std::complex<double>>())
+    {
+        mgardType = mgard_x::data_type::Double;
     }
     else
     {
-        throw std::invalid_argument(
-            "ERROR: ADIOS2 operator "
-            "MGARD only supports double precision, in call to Put\n");
+        helper::Throw<std::invalid_argument>(
+            "Operator", "CompressMGARD", "Operate",
+            "MGARD only supports float and double types");
     }
+    // set type end
 
-    int r[3];
-    r[0] = 1;
-    r[1] = 1;
-    r[2] = 1;
-
-    for (size_t i = 0; i < ndims; i++)
+    // set mgard style dim info
+    mgard_x::DIM mgardDim = ndims;
+    std::vector<mgard_x::SIZE> mgardCount;
+    for (const auto &c : convertedDims)
     {
-        r[ndims - i - 1] = static_cast<int>(blockCount[i]);
+        mgardCount.push_back(c);
     }
+    // set mgard style dim info end
 
     // Parameters
     bool hasTolerance = false;
-    double tolerance, s = 0.0;
+    double tolerance = 0.0;
+    double s = 0.0;
+    auto errorBoundType = mgard_x::error_bound_type::REL;
+
     auto itAccuracy = m_Parameters.find("accuracy");
     if (itAccuracy != m_Parameters.end())
     {
@@ -98,63 +117,52 @@ size_t CompressMGARD::Operate(const char *dataIn, const Dims &blockStart,
     }
     if (!hasTolerance)
     {
-        throw std::invalid_argument("ERROR: missing mandatory parameter "
-                                    "tolerance for MGARD compression "
-                                    "operator\n");
+        helper::Throw<std::invalid_argument>(
+            "Operator", "CompressMGARD", "Operate",
+            "missing mandatory parameter tolerance / accuracy");
     }
     auto itSParameter = m_Parameters.find("s");
     if (itSParameter != m_Parameters.end())
     {
         s = std::stod(itSParameter->second);
     }
-
-    int sizeOut = 0;
-    unsigned char *dataOutPtr =
-        mgard_compress(reinterpret_cast<double *>(const_cast<char *>(dataIn)),
-                       sizeOut, r[0], r[1], r[2], tolerance, s);
-
-    std::memcpy(bufferOut + bufferOutOffset, dataOutPtr, sizeOut);
-    free(dataOutPtr);
-    dataOutPtr = nullptr;
-
-    bufferOutOffset += sizeOut;
-
-    return bufferOutOffset;
-}
-
-size_t CompressMGARD::InverseOperate(const char *bufferIn, const size_t sizeIn,
-                                     char *dataOut)
-{
-    size_t bufferInOffset = 1; // skip operator type
-    const uint8_t bufferVersion =
-        GetParameter<uint8_t>(bufferIn, bufferInOffset);
-    bufferInOffset += 2; // skip two reserved bytes
-
-    if (bufferVersion == 1)
+    auto itMode = m_Parameters.find("mode");
+    if (itMode != m_Parameters.end())
     {
-        return DecompressV1(bufferIn + bufferInOffset, sizeIn - bufferInOffset,
-                            dataOut);
+        if (itMode->second == "ABS")
+        {
+            errorBoundType = mgard_x::error_bound_type::ABS;
+        }
+        else if (itMode->second == "REL")
+        {
+            errorBoundType = mgard_x::error_bound_type::REL;
+        }
     }
-    else if (bufferVersion == 2)
+
+    size_t sizeOut = 0;
+    void *compressedData = nullptr;
+    mgard_x::compress(mgardDim, mgardType, mgardCount, tolerance, s,
+                      errorBoundType, dataIn, compressedData, sizeOut, false);
+
+    if (bufferOutOffset + sizeOut >
+        helper::GetTotalSize(blockCount, helper::GetDataTypeSize(type)))
     {
-        // TODO: if a Version 2 mgard buffer is being implemented, put it here
-        // and keep the DecompressV1 routine for backward compatibility
+        CompressNull c({});
+        bufferOutOffset =
+            c.Operate(dataIn, blockStart, blockCount, type, bufferOut);
     }
     else
     {
-        throw("unknown mgard buffer version");
+        std::memcpy(bufferOut + bufferOutOffset, compressedData, sizeOut);
+        bufferOutOffset += sizeOut;
     }
 
-    return 0;
-}
-
-bool CompressMGARD::IsDataTypeValid(const DataType type) const
-{
-    if (type == DataType::Double)
+    if (compressedData)
     {
-        return true;
+        free(compressedData);
     }
-    return false;
+
+    return bufferOutOffset;
 }
 
 size_t CompressMGARD::DecompressV1(const char *bufferIn, const size_t sizeIn,
@@ -181,43 +189,70 @@ size_t CompressMGARD::DecompressV1(const char *bufferIn, const size_t sizeIn,
         std::to_string(GetParameter<uint8_t>(bufferIn, bufferInOffset)) +
         ". Please make sure a compatible version is used for decompression.";
 
-    int mgardType = -1;
+    size_t sizeOut =
+        helper::GetTotalSize(blockCount, helper::GetDataTypeSize(type));
 
-    if (type == helper::GetDataType<double>())
+    if (type == DataType::FloatComplex || type == DataType::DoubleComplex)
     {
-        mgardType = 1;
+        sizeOut /= 2;
+    }
+
+    try
+    {
+        void *dataOutVoid = nullptr;
+        mgard_x::decompress(bufferIn + bufferInOffset, sizeIn - bufferInOffset,
+                            dataOutVoid, false);
+        std::memcpy(dataOut, dataOutVoid, sizeOut);
+        if (dataOutVoid)
+        {
+            free(dataOutVoid);
+        }
+    }
+    catch (...)
+    {
+        helper::Throw<std::runtime_error>("Operator", "CompressMGARD",
+                                          "DecompressV1", m_VersionInfo);
+    }
+
+    return sizeOut;
+}
+
+size_t CompressMGARD::InverseOperate(const char *bufferIn, const size_t sizeIn,
+                                     char *dataOut)
+{
+    size_t bufferInOffset = 1; // skip operator type
+    const uint8_t bufferVersion =
+        GetParameter<uint8_t>(bufferIn, bufferInOffset);
+    bufferInOffset += 2; // skip two reserved bytes
+
+    if (bufferVersion == 1)
+    {
+        return DecompressV1(bufferIn + bufferInOffset, sizeIn - bufferInOffset,
+                            dataOut);
+    }
+    else if (bufferVersion == 2)
+    {
+        // TODO: if a Version 2 mgard buffer is being implemented, put it here
+        // and keep the DecompressV1 routine for backward compatibility
     }
     else
     {
-        throw std::invalid_argument(
-            "ERROR: ADIOS2 operator "
-            "MGARD only supports double precision, in call to Get\n");
+        helper::Throw<std::runtime_error>("Operator", "CompressMGARD",
+                                          "InverseOperate",
+                                          "invalid mgard buffer version");
     }
 
-    int r[3];
-    r[0] = 1;
-    r[1] = 1;
-    r[2] = 1;
+    return 0;
+}
 
-    for (size_t i = 0; i < ndims; i++)
+bool CompressMGARD::IsDataTypeValid(const DataType type) const
+{
+    if (type == DataType::Double || type == DataType::Float ||
+        type == DataType::DoubleComplex || type == DataType::FloatComplex)
     {
-        r[ndims - i - 1] = static_cast<int>(blockCount[i]);
+        return true;
     }
-
-    void *dataPtr = mgard_decompress(
-        reinterpret_cast<unsigned char *>(
-            const_cast<char *>(bufferIn + bufferInOffset)),
-        static_cast<int>(sizeIn - bufferInOffset), r[0], r[1], r[2], 0.0);
-
-    const size_t sizeOut =
-        helper::GetTotalSize(blockCount, helper::GetDataTypeSize(type));
-
-    std::memcpy(dataOut, dataPtr, sizeOut);
-
-    free(dataPtr);
-    dataPtr = nullptr;
-
-    return sizeOut;
+    return false;
 }
 
 } // end namespace compress

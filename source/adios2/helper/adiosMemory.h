@@ -44,16 +44,24 @@ void InsertToBuffer(std::vector<char> &buffer, const T *source,
  * Copies data from a GPU buffer to a specific location in the adios buffer
  */
 template <class T>
-void CopyFromGPUToBuffer(std::vector<char> &buffer, size_t &position,
+void CopyFromGPUToBuffer(std::vector<char> &dest, size_t &position,
                          const T *source, const size_t elements = 1) noexcept;
 template <class T>
-void CudaMemCopyToBuffer(char *buffer, size_t position, const T *source,
+void CudaMemCopyToBuffer(char *dest, size_t position, const T *GPUbuffer,
                          const size_t size) noexcept;
+
+/*
+ * Copies data from a specific location in the adios buffer to a GPU buffer
+ */
+template <class T>
+void CudaMemCopyFromBuffer(T *GPUbuffer, size_t position, const char *source,
+                           const size_t size) noexcept;
 
 /**
  * Wrapper around cudaMemcpy needed for isolating CUDA interface dependency
  */
-void MemcpyGPUToBuffer(void *dst, const char *src, size_t byteCount);
+void MemcpyGPUToBuffer(void *dst, const char *GPUbuffer, size_t byteCount);
+void MemcpyBufferToGPU(char *GPUbuffer, const char *src, size_t byteCount);
 #endif
 
 /**
@@ -176,7 +184,8 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
                           const Box<Dims> &intersectionBox,
                           const bool isRowMajor = true,
                           const bool reverseDimensions = false,
-                          const bool endianReverse = false);
+                          const bool endianReverse = false,
+                          const bool isGPU = false);
 
 template <class T>
 void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
@@ -185,11 +194,13 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
                           const Box<Dims> &intersectionBox,
                           const bool isRowMajor = true,
                           const bool reverseDimensions = false,
-                          const bool endianReverse = false);
+                          const bool endianReverse = false,
+                          const bool isGPU = false);
 
 template <class T>
 void CopyContiguousMemory(const char *src, const size_t stride, T *dest,
-                          const bool endianReverse = false);
+                          const bool endianReverse = false,
+                          const bool isGPU = false);
 
 /**
  * Clips a vector returning the sub-vector between start and end (end is

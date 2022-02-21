@@ -106,11 +106,14 @@ private:
     void InitParameters() final;
     /** Set up the aggregator */
     void InitAggregator();
-    /** Parses transports and parameters from IO AddTransport */
+    /** Complete opening/createing metadata and data files */
     void InitTransports() final;
     /** Allocates memory and starts a PG group */
     void InitBPBuffer();
     void NotifyEngineAttribute(std::string name, DataType type) noexcept;
+    /** Notify the engine when a new attribute is defined or modified. Called
+     * from IO.tcc
+     */
 
     void EnterComputationBlock() noexcept;
     /** Inform about computation block through User->ADIOS->IO */
@@ -227,8 +230,7 @@ private:
      */
     std::vector<uint64_t> m_WriterDataPos;
 
-    uint32_t m_MarshaledAttributesCount =
-        0; // updated during EndStep/MarshalAttributes
+    bool m_MarshalAttributesNecessary = true;
 
     // where each writer rank writes its data, init in InitBPBuffer;
     std::vector<uint64_t> m_Assignment;
@@ -238,6 +240,21 @@ private:
     void MakeHeader(format::BufferSTL &b, const std::string fileType,
                     const bool isActive);
 
+    std::vector<uint64_t> m_WriterSubfileMap; // rank => subfile index
+
+    // Append helper data
+    std::vector<size_t> m_AppendDataPos;  // each subfile append pos
+    size_t m_AppendMetadataPos;           // metadata file append pos
+    size_t m_AppendMetaMetadataPos;       // meta-metadata file append pos
+    size_t m_AppendMetadataIndexPos;      // index file append pos
+    uint32_t m_AppendWriterCount;         // last active number of writers
+    unsigned int m_AppendAggregatorCount; // last active number of aggr
+    unsigned int m_AppendSubfileCount;    // last active number of subfiles
+    /* Process existing index, fill in append variables,
+     * and return the actual step we land after appending.
+     * Uses parameter AppendAfterStep
+     * It resets m_Aggregator->m_NumAggregators so init aggregators later
+     */
     uint64_t CountStepsInMetadataIndex(format::BufferSTL &bufferSTL);
 
     /* Async write's future */

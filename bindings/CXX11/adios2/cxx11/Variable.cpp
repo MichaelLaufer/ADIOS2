@@ -235,6 +235,13 @@ namespace adios2
     }                                                                          \
                                                                                \
     template <>                                                                \
+    std::map<size_t, std::vector<typename Variable<T>::Info>>                  \
+    Variable<T>::AllStepsBlocksInfoMap() const                                 \
+    {                                                                          \
+        return DoAllStepsBlocksInfoMap();                                      \
+    }                                                                          \
+                                                                               \
+    template <>                                                                \
     const T *Variable<T>::Info::Data() const                                   \
     {                                                                          \
         const core::Variable<T>::BPInfo *coreInfo =                            \
@@ -255,6 +262,12 @@ ADIOS2_FOREACH_TYPE_1ARG(declare_template_instantiation)
 
 #define declare_template_instantiation(T) template class detail::Span<T>;
 ADIOS2_FOREACH_PRIMITIVE_TYPE_1ARG(declare_template_instantiation)
+#undef declare_template_instantiation
+
+#define declare_template_instantiation(T)                                      \
+    template std::vector<typename Variable<T>::Info>                           \
+    Variable<T>::ToBlocksInfoMin(const MinVarInfo *coreVarInfo) const;
+ADIOS2_FOREACH_TYPE_1ARG(declare_template_instantiation)
 #undef declare_template_instantiation
 
 } // end namespace adios2

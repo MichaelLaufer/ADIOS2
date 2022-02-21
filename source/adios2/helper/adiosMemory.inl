@@ -76,19 +76,27 @@ void InsertToBuffer(std::vector<char> &buffer, const T *source,
 
 #ifdef ADIOS2_HAVE_CUDA
 template <class T>
-void CopyFromGPUToBuffer(std::vector<char> &buffer, size_t &position,
-                         const T *source, const size_t elements) noexcept
+void CopyFromGPUToBuffer(std::vector<char> &dest, size_t &position,
+                         const T *GPUbuffer, const size_t elements) noexcept
 {
-	CudaMemCopyToBuffer(buffer.data(), position, source, elements * sizeof(T));
+    CudaMemCopyToBuffer(dest.data(), position, GPUbuffer, elements * sizeof(T));
     position += elements * sizeof(T);
 }
 
 template <class T>
-void CudaMemCopyToBuffer(char *buffer, size_t position,
-                         const T *source, const size_t size) noexcept
+void CudaMemCopyToBuffer(char *dest, size_t position, const T *GPUbuffer,
+                         const size_t size) noexcept
 {
-    const char *src = reinterpret_cast<const char *>(source);
-    MemcpyGPUToBuffer(buffer + position, src, size);
+    const char *buffer = reinterpret_cast<const char *>(GPUbuffer);
+    MemcpyGPUToBuffer(dest + position, buffer, size);
+}
+
+template <class T>
+void CudaMemCopyFromBuffer(T *GPUbuffer, size_t position, const char *source,
+                           const size_t size) noexcept
+{
+    char *dest = reinterpret_cast<char *>(GPUbuffer);
+    MemcpyBufferToGPU(dest, source + position, size);
 }
 #endif
 
@@ -363,13 +371,14 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
                           const Box<Dims> &blockBox,
                           const Box<Dims> &intersectionBox,
                           const bool isRowMajor, const bool reverseDimensions,
-                          const bool endianReverse)
+                          const bool endianReverse, const bool isGPU)
 {
     auto lf_ClipRowMajor =
         [](T *dest, const Dims &destStart, const Dims &destCount,
            const char *contiguousMemory, const Box<Dims> &blockBox,
            const Box<Dims> &intersectionBox, const bool isRowMajor,
-           const bool reverseDimensions, const bool endianReverse)
+           const bool reverseDimensions, const bool endianReverse,
+           const bool isGPU)
 
     {
         const Dims &istart = intersectionBox.first;
@@ -426,7 +435,7 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
                 helper::LinearIndex(selectionBox, currentPoint, true);
 
             CopyContiguousMemory(contiguousMemory + contiguousStart, stride,
-                                 dest + variableStart, endianReverse);
+                                 dest + variableStart, endianReverse, isGPU);
 
             // Here update each non-contiguous dim recursively
             if (nContDim >= dimensions)
@@ -465,7 +474,8 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
         [](T *dest, const Dims &destStart, const Dims &destCount,
            const char *contiguousMemory, const Box<Dims> &blockBox,
            const Box<Dims> &intersectionBox, const bool isRowMajor,
-           const bool reverseDimensions, const bool endianReverse)
+           const bool reverseDimensions, const bool endianReverse,
+           const bool isGPU)
 
     {
         const Dims &istart = intersectionBox.first;
@@ -517,7 +527,7 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
                 helper::LinearIndex(selectionBox, currentPoint, false);
 
             CopyContiguousMemory(contiguousMemory + contiguousStart, stride,
-                                 dest + variableStart, endianReverse);
+                                 dest + variableStart, endianReverse, isGPU);
 
             // Here update each non-contiguous dim recursively.
             if (nContDim >= dimensions)
@@ -562,7 +572,7 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
         const size_t stride = (end.back() - start.back() + 1) * sizeof(T);
 
         CopyContiguousMemory(contiguousMemory, stride, dest + normalizedStart,
-                             endianReverse);
+                             endianReverse, isGPU);
         return;
     }
 
@@ -570,13 +580,13 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
     {
         lf_ClipRowMajor(dest, destStart, destCount, contiguousMemory, blockBox,
                         intersectionBox, isRowMajor, reverseDimensions,
-                        endianReverse);
+                        endianReverse, isGPU);
     }
     else // stored with Fortran, R
     {
         lf_ClipColumnMajor(dest, destStart, destCount, contiguousMemory,
                            blockBox, intersectionBox, isRowMajor,
-                           reverseDimensions, endianReverse);
+                           reverseDimensions, endianReverse, isGPU);
     }
 }
 
@@ -586,18 +596,29 @@ void ClipContiguousMemory(T *dest, const Dims &destStart, const Dims &destCount,
                           const Box<Dims> &blockBox,
                           const Box<Dims> &intersectionBox,
                           const bool isRowMajor, const bool reverseDimensions,
-                          const bool endianReverse)
+                          const bool endianReverse, const bool isGPU)
 {
 
     ClipContiguousMemory(dest, destStart, destCount, contiguousMemory.data(),
                          blockBox, intersectionBox, isRowMajor,
-                         reverseDimensions, endianReverse);
+                         reverseDimensions, endianReverse, isGPU);
 }
 
 template <class T>
 void CopyContiguousMemory(const char *src, const size_t payloadStride, T *dest,
-                          const bool endianReverse)
+                          const bool endianReverse, const bool isGPU)
 {
+    if (isGPU)
+    {
+        if (endianReverse)
+            helper::Throw<std::invalid_argument>(
+                "Helper", "Memory", "CopyContiguousMemory",
+                "Direct byte order reversal not supported for GPU buffers");
+#ifdef ADIOS2_HAVE_CUDA
+        CudaMemCopyFromBuffer(dest, 0, src, payloadStride);
+        return;
+#endif
+    }
 #ifdef ADIOS2_HAVE_ENDIAN_REVERSE
     if (endianReverse)
     {
@@ -624,9 +645,10 @@ void Resize(std::vector<T> &vec, const size_t dataSize, const std::string hint,
     }
     catch (...)
     {
-        std::throw_with_nested(std::runtime_error(
-            "ERROR: buffer overflow when resizing to " +
-            std::to_string(dataSize) + " bytes, " + hint + "\n"));
+        helper::ThrowNested<std::runtime_error>(
+            "Helper", "adiosMemory", "Resize",
+            "buffer overflow when resizing to " + std::to_string(dataSize) +
+                " bytes, " + hint);
     }
 }
 

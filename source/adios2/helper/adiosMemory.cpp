@@ -16,7 +16,6 @@
 #include "adios2/helper/adiosType.h"
 
 #ifdef ADIOS2_HAVE_CUDA
-#include <cuda.h>
 #include <cuda_runtime.h>
 #endif
 
@@ -313,9 +312,14 @@ uint64_t PaddingToAlignOffset(uint64_t offset, uint64_t alignment_size)
 }
 
 #ifdef ADIOS2_HAVE_CUDA
-void MemcpyGPUToBuffer(void *dst, const char *src, size_t byteCount)
+void MemcpyGPUToBuffer(void *dst, const char *GPUbuffer, size_t byteCount)
 {
-    cudaMemcpy(dst, src, byteCount, cudaMemcpyDeviceToHost);
+    cudaMemcpy(dst, GPUbuffer, byteCount, cudaMemcpyDeviceToHost);
+}
+
+void MemcpyBufferToGPU(char *GPUbuffer, const char *src, size_t byteCount)
+{
+    cudaMemcpy(GPUbuffer, src, byteCount, cudaMemcpyHostToDevice);
 }
 #endif
 

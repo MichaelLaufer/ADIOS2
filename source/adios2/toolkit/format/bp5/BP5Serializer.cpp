@@ -546,10 +546,10 @@ size_t BP5Serializer::CalcSize(const size_t Count, const size_t *Vals)
     return Elems;
 }
 
-void BP5Serializer::PerformPuts()
+void BP5Serializer::PerformPuts(bool forceCopyDeferred)
 {
     //  Dump data for externs into iovec
-    DumpDeferredBlocks();
+    DumpDeferredBlocks(forceCopyDeferred);
 
     CurDataBuffer->CopyExternalToInternal();
 }
@@ -570,7 +570,7 @@ void BP5Serializer::DumpDeferredBlocks(bool forceCopyDeferred)
 }
 
 static void GetMinMax(const void *Data, size_t ElemCount, const DataType Type,
-                      core::Engine::MinMaxStruct &MinMax, MemorySpace MemSpace)
+                      MinMaxStruct &MinMax, MemorySpace MemSpace)
 {
     MinMax.Init(Type);
     if (ElemCount == 0)
@@ -673,11 +673,11 @@ void BP5Serializer::Marshal(void *Variable, const char *Name,
         MetaEntry->Dims = DimCount;
         if (CurDataBuffer == NULL)
         {
-            throw std::logic_error(
-                "BP5Serializer:: Marshall without Prior Init");
+            helper::Throw<std::logic_error>("Toolkit", "format::BP5Serializer",
+                                            "Marshal", "without prior Init");
         }
 
-        core::Engine::MinMaxStruct MinMax;
+        MinMaxStruct MinMax;
         MinMax.Init(Type);
         if ((m_StatsLevel > 0) && !Span)
         {
@@ -876,23 +876,26 @@ void BP5Serializer::InitStep(BufferV *DataBuffer)
 {
     if (CurDataBuffer != NULL)
     {
-        throw std::logic_error("BP5Serializer:: InitStep without prior close");
+        helper::Throw<std::logic_error>("Toolkit", "format::BP5Serializer",
+                                        "InitStep", "without prior Close");
     }
     CurDataBuffer = DataBuffer;
     m_PriorDataBufferSizeTotal = 0;
 }
 
-BufferV *BP5Serializer::ReinitStepData(BufferV *DataBuffer)
+BufferV *BP5Serializer::ReinitStepData(BufferV *DataBuffer,
+                                       bool forceCopyDeferred)
 {
     if (CurDataBuffer == NULL)
     {
-        throw std::logic_error("BP5Serializer:: ReinitStep without prior Init");
+        helper::Throw<std::logic_error>("Toolkit", "format::BP5Serializer",
+                                        "ReinitStepData", "without prior Init");
     }
     //  Dump data for externs into iovec
-    DumpDeferredBlocks();
+    DumpDeferredBlocks(forceCopyDeferred);
 
     m_PriorDataBufferSizeTotal += CurDataBuffer->AddToVec(
-        0, NULL, sizeof(max_align_t), true); //  output block size aligned
+        0, NULL, m_BufferBlockSize, true); //  output block size aligned
 
     BufferV *tmp = CurDataBuffer;
     CurDataBuffer = DataBuffer;
@@ -960,15 +963,15 @@ BP5Serializer::TimestepInfo BP5Serializer::CloseTimestep(int timestep,
 
     if (CurDataBuffer == NULL)
     {
-        throw std::logic_error(
-            "BP5Serializer:: CloseTimestep without Prior Init");
+        helper::Throw<std::logic_error>("Toolkit", "format::BP5Serializer",
+                                        "CloseTimestep", "without prior Init");
     }
 
     //  Dump data for externs into iovec
     DumpDeferredBlocks(forceCopyDeferred);
 
     MBase->DataBlockSize = CurDataBuffer->AddToVec(
-        0, NULL, sizeof(max_align_t), true); //  output block size aligned
+        0, NULL, m_BufferBlockSize, true); //  output block size aligned
 
     MBase->DataBlockSize += m_PriorDataBufferSizeTotal;
 

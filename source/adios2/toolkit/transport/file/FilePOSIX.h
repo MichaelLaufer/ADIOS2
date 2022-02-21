@@ -35,11 +35,11 @@ public:
     ~FilePOSIX();
 
     void Open(const std::string &name, const Mode openMode,
-              const bool async = false) final;
+              const bool async = false, const bool directio = false) final;
 
     void OpenChain(const std::string &name, Mode openMode,
-                   const helper::Comm &chainComm,
-                   const bool async = false) final;
+                   const helper::Comm &chainComm, const bool async = false,
+                   const bool directio = false) final;
 
     void Write(const char *buffer, size_t size, size_t start = MaxSizeT) final;
 
@@ -66,6 +66,8 @@ public:
 
     void Seek(const size_t start = MaxSizeT) final;
 
+    void Truncate(const size_t length) final;
+
     void MkDir(const std::string &fileName) final;
 
 private:
@@ -74,6 +76,7 @@ private:
     int m_Errno = 0;
     bool m_IsOpening = false;
     std::future<int> m_OpenFuture;
+    bool m_DirectIO = false;
 
     /**
      * Check if m_FileDescriptor is -1 after an operation

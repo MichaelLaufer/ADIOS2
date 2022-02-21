@@ -8,11 +8,16 @@
  *      Author: William F Godoy godoywf@ornl.gov
  */
 #include "FileFStream.h"
+#include "adios2/helper/adiosLog.h"
 #include <cstdio> // remove
 
 /// \cond EXCLUDE_FROM_DOXYGEN
 #include <ios> // std::ios_base::failure
 /// \endcond
+
+#if __cplusplus >= 201703L
+#include <filesystem>
+#endif
 
 namespace adios2
 {
@@ -41,7 +46,7 @@ void FileFStream::WaitForOpen()
 }
 
 void FileFStream::Open(const std::string &name, const Mode openMode,
-                       const bool async)
+                       const bool async, const bool directio)
 {
     auto lf_AsyncOpenWrite = [&](const std::string &name) -> void {
         ProfilerStart("open");
@@ -102,7 +107,8 @@ void FileFStream::Open(const std::string &name, const Mode openMode,
 }
 
 void FileFStream::OpenChain(const std::string &name, Mode openMode,
-                            const helper::Comm &chainComm, const bool async)
+                            const helper::Comm &chainComm, const bool async,
+                            const bool directio)
 {
     auto lf_AsyncOpenWrite = [&](const std::string &name) -> void {
         ProfilerStart("open");
@@ -187,7 +193,8 @@ void FileFStream::SetBuffer(char *buffer, size_t size)
 {
     if (!buffer && size != 0)
     {
-        throw std::invalid_argument(
+        helper::Throw<std::invalid_argument>(
+            "Toolkit", "transport::file::FileFStream", "SetBuffer",
             "buffer size must be 0 when using a NULL buffer");
     }
     m_FileStream.rdbuf()->pubsetbuf(buffer, size);
@@ -277,8 +284,9 @@ size_t FileFStream::GetSize()
     const std::streampos size = m_FileStream.tellg();
     if (static_cast<int>(size) == -1)
     {
-        throw std::ios_base::failure("ERROR: couldn't get size of " + m_Name +
-                                     " file\n");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "transport::file::FileFStream", "GetSize",
+            "couldn't get size of " + m_Name + " file");
     }
     m_FileStream.seekg(currentPosition);
     return static_cast<size_t>(size);
@@ -319,7 +327,8 @@ void FileFStream::CheckFile(const std::string hint) const
 {
     if (!m_FileStream)
     {
-        throw std::ios_base::failure("ERROR: " + hint + "\n");
+        helper::Throw<std::ios_base::failure>(
+            "Toolkit", "transport::file::FileFStream", "CheckFile", hint);
     }
 }
 
@@ -352,6 +361,21 @@ void FileFStream::Seek(const size_t start)
     {
         SeekToEnd();
     }
+}
+
+void FileFStream::Truncate(const size_t length)
+{
+#if __cplusplus >= 201703L
+    // C++17 specific stuff here
+    WaitForOpen();
+    std::filesystem::path p(m_Name);
+    std::filesystem::resize_file(p, static_cast<std::uintmax_t>(length));
+    // TODO: variable start has not been defined...
+    // CheckFile("couldn't move to offset " + std::to_string(start) + " of file
+    // " + m_Name + ", in call to fstream seekp");
+#else
+    // Trunation is not supported in a portable manner pre C++17
+#endif
 }
 
 void FileFStream::MkDir(const std::string &fileName) {}

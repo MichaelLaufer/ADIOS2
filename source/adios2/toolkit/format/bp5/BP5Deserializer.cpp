@@ -10,6 +10,7 @@
 #include "adios2/core/Engine.h"
 #include "adios2/core/IO.h"
 #include "adios2/core/VariableBase.h"
+#include "adios2/helper/adiosFunctions.h"
 
 #include "BP5Deserializer.h"
 #include "BP5Deserializer.tcc"
@@ -42,7 +43,7 @@ namespace adios2
 {
 namespace format
 {
-static void ApplyElementMinMax(Engine::MinMaxStruct &MinMax, DataType Type,
+static void ApplyElementMinMax(MinMaxStruct &MinMax, DataType Type,
                                void *Element);
 
 void BP5Deserializer::InstallMetaMetaData(MetaMetaInfoBlock &MM)
@@ -201,10 +202,10 @@ void BP5Deserializer::BreakdownArrayName(const char *Name, char **base_name_p,
     *(rindex(*base_name_p, '_')) = 0;
 }
 
-BP5Deserializer::BP5VarRec *BP5Deserializer::LookupVarByKey(void *Key)
+BP5Deserializer::BP5VarRec *BP5Deserializer::LookupVarByKey(void *Key) const
 {
-    auto ret = VarByKey[Key];
-    return ret;
+    auto ret = VarByKey.find(Key);
+    return ret->second;
 }
 
 BP5Deserializer::BP5VarRec *BP5Deserializer::LookupVarByName(const char *Name)
@@ -222,8 +223,9 @@ BP5Deserializer::BP5VarRec *BP5Deserializer::CreateVarRec(const char *ArrayName)
     VarByName[Ret->VarName] = Ret;
     if (!m_RandomAccessMode)
     {
-        Ret->PerWriterMetaFieldOffset.resize(m_WriterCohortSize);
-        Ret->PerWriterBlockStart.resize(m_WriterCohortSize);
+        const size_t writerCohortSize = WriterCohortSize(MaxSizeT);
+        Ret->PerWriterMetaFieldOffset.resize(writerCohortSize);
+        Ret->PerWriterBlockStart.resize(writerCohortSize);
     }
     return Ret;
 }
@@ -438,21 +440,53 @@ void *BP5Deserializer::ArrayVarSetup(core::Engine *engine,
     return (void *)NULL;
 };
 
-void BP5Deserializer::SetupForTimestep(size_t Timestep)
+void BP5Deserializer::SetupForStep(size_t Step, size_t WriterCount)
 {
-    CurTimestep = Timestep;
-    PendingRequests.clear();
-
-    for (auto RecPair : VarByKey)
+    CurTimestep = Step;
+    if (m_RandomAccessMode)
     {
-        m_Engine->m_IO.RemoveVariable(RecPair.second->VarName);
-        RecPair.second->Variable = NULL;
+        if (m_WriterCohortSize.size() < Step + 1)
+        {
+            m_WriterCohortSize.resize(Step + 1);
+        }
+        m_WriterCohortSize[Step] = WriterCount;
+    }
+    else
+    {
+        PendingRequests.clear();
+
+        for (auto RecPair : VarByKey)
+        {
+            m_Engine->m_IO.RemoveVariable(RecPair.second->VarName);
+            RecPair.second->Variable = NULL;
+        }
+        m_CurrentWriterCohortSize = WriterCount;
+    }
+}
+
+size_t BP5Deserializer::WriterCohortSize(size_t Step) const
+{
+    if (m_RandomAccessMode)
+    {
+        if (Step < m_WriterCohortSize.size())
+        {
+            return m_WriterCohortSize[Step];
+        }
+        else
+        {
+            return m_WriterCohortSize.back();
+        }
+    }
+    else
+    {
+        return m_CurrentWriterCohortSize;
     }
 }
 
 void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
                                       size_t WriterRank, size_t Step)
 {
+    const size_t writerCohortSize = WriterCohortSize(Step);
     FFSTypeHandle FFSformat;
     void *BaseData;
     static int DumpMetadata = -1;
@@ -460,8 +494,10 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
         FFSTypeHandle_from_encode(ReaderFFSContext, (char *)MetadataBlock);
     if (!FFSformat)
     {
-        throw std::logic_error("Internal error or file corruption, no know "
-                               "format for Metadata Block");
+        helper::Throw<std::logic_error>("Toolkit", "format::BP5Deserializer",
+                                        "InstallMetaData",
+                                        "Internal error or file corruption, no "
+                                        "know format for Metadata Block");
     }
     if (!FFShas_conversion(FFSformat))
     {
@@ -512,7 +548,7 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
         }
         if (m_ControlArray[Step].size() == 0)
         {
-            m_ControlArray[Step].resize(m_WriterCohortSize);
+            m_ControlArray[Step].resize(writerCohortSize);
         }
         m_ControlArray[Step][WriterRank] = Control;
 
@@ -520,7 +556,7 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
         if (MetadataBaseArray[Step] == nullptr)
         {
             m_MetadataBaseAddrs = new std::vector<void *>();
-            m_MetadataBaseAddrs->resize(m_WriterCohortSize);
+            m_MetadataBaseAddrs->resize(writerCohortSize);
             MetadataBaseArray[Step] = m_MetadataBaseAddrs;
             m_FreeableMBA = nullptr;
         }
@@ -531,7 +567,10 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
         {
             m_MetadataBaseAddrs = new std::vector<void *>();
             m_FreeableMBA = m_MetadataBaseAddrs;
-            m_MetadataBaseAddrs->resize(m_WriterCohortSize);
+        }
+        if (writerCohortSize > m_MetadataBaseAddrs->size())
+        {
+            m_MetadataBaseAddrs->resize(writerCohortSize);
         }
     }
     (*m_MetadataBaseAddrs)[WriterRank] = BaseData;
@@ -546,7 +585,22 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
             continue;
         }
         if (!m_RandomAccessMode)
+        {
+            if (writerCohortSize > VarRec->PerWriterBlockStart.size())
+            {
+                VarRec->PerWriterBlockStart.resize(writerCohortSize);
+                VarRec->PerWriterMetaFieldOffset.resize(writerCohortSize);
+            }
             VarRec->PerWriterMetaFieldOffset[WriterRank] = FieldOffset;
+        }
+        else
+        {
+            if ((VarRec->AbsStepFromRel.size() == 0) ||
+                (VarRec->AbsStepFromRel.back() != Step))
+            {
+                VarRec->AbsStepFromRel.push_back(Step);
+            }
+        }
         if ((ControlFields[i].OrigShapeID == ShapeID::GlobalArray) ||
             (ControlFields[i].OrigShapeID == ShapeID::LocalArray))
         {
@@ -591,18 +645,18 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
                 if (WriterRank == 0)
                 {
                     VarRec->PerWriterBlockStart[WriterRank] = 0;
-                    if (m_WriterCohortSize > 1)
+                    if (writerCohortSize > 1)
                         VarRec->PerWriterBlockStart[WriterRank + 1] =
                             BlockCount;
                 }
-                if (WriterRank < static_cast<size_t>(m_WriterCohortSize - 1))
+                if (WriterRank < static_cast<size_t>(writerCohortSize - 1))
                 {
                     VarRec->PerWriterBlockStart[WriterRank + 1] =
                         VarRec->PerWriterBlockStart[WriterRank] + BlockCount;
                 }
                 if (VarRec->MinMaxOffset != SIZE_MAX)
                 {
-                    core::Engine::MinMaxStruct MinMax;
+                    MinMaxStruct MinMax;
                     MinMax.Init(VarRec->Type);
                     for (size_t B = 0; B < BlockCount; B++)
                     {
@@ -619,21 +673,6 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
                     }
                 }
             }
-            else
-            {
-                //   Random access, add to m_AvailableShapes
-                if ((VarRec->LastShapeAdded != Step) && meta_base->Shape)
-                {
-                    std::vector<size_t> shape;
-                    for (size_t i = 0; i < meta_base->Dims; i++)
-                    {
-                        shape.push_back(meta_base->Shape[i]);
-                    }
-                    static_cast<VariableBase *>(VarRec->Variable)
-                        ->m_AvailableShapes[Step + 1] = shape;
-                    VarRec->LastShapeAdded = Step;
-                }
-            }
         }
         else
         {
@@ -644,7 +683,7 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
                     // Local single values show up as global arrays on the
                     // reader
                     size_t zero = 0;
-                    size_t writerSize = m_WriterCohortSize;
+                    size_t writerSize = writerCohortSize;
                     VarRec->Variable =
                         ArrayVarSetup(m_Engine, VarRec->VarName, VarRec->Type,
                                       1, &writerSize, &zero, &writerSize);
@@ -662,18 +701,18 @@ void BP5Deserializer::InstallMetaData(void *MetadataBlock, size_t BlockLen,
                         m_Engine;
                 }
                 VarByKey[VarRec->Variable] = VarRec;
-                VarRec->LastTSAdded = Step; // starts at 1
+                VarRec->LastTSAdded = Step;
             }
+        }
+        if (VarRec->FirstTSSeen == SIZE_MAX)
+        {
+            VarRec->FirstTSSeen = Step;
         }
         if (m_RandomAccessMode && (VarRec->LastTSAdded != Step))
         {
             static_cast<VariableBase *>(VarRec->Variable)
                 ->m_AvailableStepsCount++;
             VarRec->LastTSAdded = Step;
-        }
-        if (VarRec->FirstTSSeen == SIZE_MAX)
-        {
-            VarRec->FirstTSSeen = Step;
         }
     }
 }
@@ -699,8 +738,10 @@ void BP5Deserializer::InstallAttributeData(void *AttributeBlock,
         FFSTypeHandle_from_encode(ReaderFFSContext, (char *)AttributeBlock);
     if (!FFSformat)
     {
-        throw std::logic_error("Internal error or file corruption, no know "
-                               "format for Attribute Block");
+        helper::Throw<std::logic_error>(
+            "Toolkit", "format::BP5Deserializer", "InstallAttributeData",
+            "Internal error or file corruption, no know "
+            "format for Attribute Block");
     }
     if (!FFShas_conversion(FFSformat))
     {
@@ -834,26 +875,41 @@ bool BP5Deserializer::QueueGet(core::VariableBase &variable, void *DestData)
     }
     else
     {
+        BP5VarRec *VarRec = VarByKey[&variable];
         bool ret = false;
         if (variable.m_StepsStart + variable.m_StepsCount >
-            variable.m_AvailableStepsCount)
+            VarRec->AbsStepFromRel.size())
         {
-            throw std::invalid_argument(
-                "ERROR: offset " + std::to_string(variable.m_StepsCount) +
-                " from steps start " + std::to_string(variable.m_StepsStart) +
-                " in variable " + variable.m_Name +
-                " is beyond the largest available step = " +
-                std::to_string(variable.m_AvailableStepsCount +
-                               variable.m_AvailableStepsStart) +
-                ", check Variable SetStepSelection argument stepsCount "
-                "(random access), or "
-                "number of BeginStep calls (streaming), in call to Get");
+            helper::Throw<std::invalid_argument>(
+                "Toolkit", "format::BP5Deserializer", "QueueGet",
+                "offset " + std::to_string(variable.m_StepsCount) +
+                    " from steps start " +
+                    std::to_string(variable.m_StepsStart) + " in variable " +
+                    variable.m_Name +
+                    " is beyond the largest available relative step = " +
+                    std::to_string(VarRec->AbsStepFromRel.size()) +
+                    ", check Variable SetStepSelection argument stepsCount "
+                    "(random access), or "
+                    "number of BeginStep calls (streaming)");
         }
-        for (size_t i = 0; i < variable.m_StepsCount; i++)
+        for (size_t RelStep = variable.m_StepsStart;
+             RelStep < variable.m_StepsStart + variable.m_StepsCount; RelStep++)
         {
-            ret = QueueGetSingle(variable, DestData, variable.m_StepsStart + i);
-            size_t increment = variable.TotalSize() * variable.m_ElementSize;
-            DestData = (void *)((char *)DestData + increment);
+            const size_t AbsStep = VarRec->AbsStepFromRel[RelStep];
+            const size_t writerCohortSize = WriterCohortSize(AbsStep);
+            for (size_t WriterRank = 0; WriterRank < writerCohortSize;
+                 WriterRank++)
+            {
+                if (GetMetadataBase(VarRec, AbsStep, WriterRank))
+                {
+                    // This writer wrote on this timestep
+                    ret = QueueGetSingle(variable, DestData, AbsStep);
+                    size_t increment =
+                        variable.TotalSize() * variable.m_ElementSize;
+                    DestData = (void *)((char *)DestData + increment);
+                    break;
+                }
+            }
         }
         return ret;
     }
@@ -890,8 +946,8 @@ bool BP5Deserializer::QueueGetSingle(core::VariableBase &variable,
     BP5VarRec *VarRec = VarByKey[&variable];
     if (VarRec->OrigShapeID == ShapeID::GlobalValue)
     {
-        for (size_t WriterRank = 0; WriterRank < m_WriterCohortSize;
-             WriterRank++)
+        const size_t writerCohortSize = WriterCohortSize(Step);
+        for (size_t WriterRank = 0; WriterRank < writerCohortSize; WriterRank++)
         {
             if (GetSingleValueFromMetadata(variable, VarRec, DestData, Step,
                                            WriterRank))
@@ -902,7 +958,6 @@ bool BP5Deserializer::QueueGetSingle(core::VariableBase &variable,
     if (VarRec->OrigShapeID == ShapeID::LocalValue)
     {
         // Shows up as global array with one element per writer rank
-        DestData = (char *)DestData + variable.m_Start[0] * VarRec->ElementSize;
         for (size_t WriterRank = variable.m_Start[0];
              WriterRank < variable.m_Count[0] + variable.m_Start[0];
              WriterRank++)
@@ -927,6 +982,7 @@ bool BP5Deserializer::QueueGetSingle(core::VariableBase &variable,
         Req.Count = variable.m_Count;
         Req.Start = variable.m_Start;
         Req.Step = Step;
+        Req.MemSpace = variable.m_MemorySpace;
         Req.Data = DestData;
         PendingRequests.push_back(Req);
     }
@@ -937,10 +993,10 @@ bool BP5Deserializer::QueueGetSingle(core::VariableBase &variable,
         Req.VarRec = VarByKey[&variable];
         Req.RequestType = Local;
         Req.BlockID = variable.m_BlockID;
-        Req.Count = variable.m_Count;
         if (variable.m_SelectionType == adios2::SelectionType::BoundingBox)
         {
             Req.Start = variable.m_Start;
+            Req.Count = variable.m_Count;
         }
         Req.Data = DestData;
         Req.Step = Step;
@@ -948,6 +1004,8 @@ bool BP5Deserializer::QueueGetSingle(core::VariableBase &variable,
     }
     else
     {
+        std::cout << "Missed get type " << variable.m_SelectionType << " shape "
+                  << variable.m_ShapeID << std::endl;
     }
     return true;
 }
@@ -1033,13 +1091,14 @@ std::vector<BP5Deserializer::ReadRequest>
 BP5Deserializer::GenerateReadRequests()
 {
     std::vector<BP5Deserializer::ReadRequest> Ret;
-    std::vector<FFSReaderPerWriterRec> WriterInfo(m_WriterCohortSize);
+    // std::vector<FFSReaderPerWriterRec> WriterInfo(m_WriterCohortSize);
     typedef std::pair<size_t, size_t> pair;
     std::map<pair, bool> WriterTSNeeded;
 
     for (const auto &Req : PendingRequests)
     {
-        for (size_t i = 0; i < m_WriterCohortSize; i++)
+        const size_t writerCohortSize = WriterCohortSize(Req.Step);
+        for (size_t i = 0; i < writerCohortSize; i++)
         {
             if (WriterTSNeeded.count(std::make_pair(Req.Step, i)) == 0)
             {
@@ -1078,22 +1137,22 @@ void BP5Deserializer::FinalizeGets(std::vector<ReadRequest> Requests)
 {
     for (const auto &Req : PendingRequests)
     {
-        //        ImplementGapWarning(Reqs);
-        for (size_t WriterRank = 0; WriterRank < m_WriterCohortSize;
-             WriterRank++)
+        // ImplementGapWarning(Reqs);
+        const size_t writerCohortSize = WriterCohortSize(Req.Step);
+        for (size_t WriterRank = 0; WriterRank < writerCohortSize; WriterRank++)
         {
             size_t NodeFirst = 0;
             if (NeedWriter(Req, WriterRank, NodeFirst))
             {
                 /* if needed this writer fill destination with acquired data */
                 int ElementSize = Req.VarRec->ElementSize;
-                size_t *GlobalDimensions = Req.VarRec->GlobalDims;
                 MetaArrayRec *writer_meta_base =
                     (MetaArrayRec *)GetMetadataBase(Req.VarRec, Req.Step,
                                                     WriterRank);
                 if (!writer_meta_base)
                     continue; // Not writen on this step
 
+                size_t *GlobalDimensions = writer_meta_base->Shape;
                 int DimCount = writer_meta_base->Dims;
                 for (size_t Block = 0; Block < writer_meta_base->BlockCount;
                      Block++)
@@ -1108,7 +1167,7 @@ void BP5Deserializer::FinalizeGets(std::vector<ReadRequest> Requests)
                     std::vector<size_t> ZeroRankOffset(DimCount);
                     std::vector<size_t> ZeroGlobalDimensions(DimCount);
                     const size_t *SelOffset = NULL;
-                    const size_t *SelSize = Req.Count.data();
+                    const size_t *SelSize = NULL;
                     int ReqIndex = 0;
                     while (Requests[ReqIndex].WriterRank !=
                                static_cast<size_t>(WriterRank) ||
@@ -1145,6 +1204,10 @@ void BP5Deserializer::FinalizeGets(std::vector<ReadRequest> Requests)
                     {
                         SelOffset = Req.Start.data();
                     }
+                    if (Req.Count.size())
+                    {
+                        SelSize = Req.Count.data();
+                    }
                     if (Req.RequestType == Local)
                     {
                         int LocalBlockID = Req.BlockID - NodeFirst;
@@ -1154,6 +1217,10 @@ void BP5Deserializer::FinalizeGets(std::vector<ReadRequest> Requests)
 
                         RankOffset = ZeroRankOffset.data();
                         GlobalDimensions = ZeroGlobalDimensions.data();
+                        if (SelSize == NULL)
+                        {
+                            SelSize = RankSize;
+                        }
                         if (SelOffset == NULL)
                         {
                             SelOffset = ZeroSel.data();
@@ -1168,14 +1235,14 @@ void BP5Deserializer::FinalizeGets(std::vector<ReadRequest> Requests)
                         ExtractSelectionFromPartialRM(
                             ElementSize, DimCount, GlobalDimensions, RankOffset,
                             RankSize, SelOffset, SelSize, IncomingData,
-                            (char *)Req.Data);
+                            (char *)Req.Data, Req.MemSpace);
                     }
                     else
                     {
                         ExtractSelectionFromPartialCM(
                             ElementSize, DimCount, GlobalDimensions, RankOffset,
                             RankSize, SelOffset, SelSize, IncomingData,
-                            (char *)Req.Data);
+                            (char *)Req.Data, Req.MemSpace);
                     }
                 }
             }
@@ -1254,12 +1321,25 @@ static int FindOffsetCM(size_t Dims, const size_t *Size, const size_t *Index)
  * *******************************
  */
 
+void BP5Deserializer::MemCopyData(char *OutData, const char *InData,
+                                  size_t Size, MemorySpace MemSpace)
+{
+#ifdef ADIOS2_HAVE_CUDA
+    if (MemSpace == MemorySpace::CUDA)
+    {
+        helper::CudaMemCopyFromBuffer(OutData, 0, InData, Size);
+        return;
+    }
+#endif
+    memcpy(OutData, InData, Size);
+}
+
 // Row major version
 void BP5Deserializer::ExtractSelectionFromPartialRM(
     int ElementSize, size_t Dims, const size_t *GlobalDims,
     const size_t *PartialOffsets, const size_t *PartialCounts,
     const size_t *SelectionOffsets, const size_t *SelectionCounts,
-    const char *InData, char *OutData)
+    const char *InData, char *OutData, MemorySpace MemSpace)
 {
     size_t BlockSize;
     size_t SourceBlockStride = 0;
@@ -1341,7 +1421,7 @@ void BP5Deserializer::ExtractSelectionFromPartialRM(
     size_t i;
     for (i = 0; i < BlockCount; i++)
     {
-        memcpy(OutData, InData, BlockSize * ElementSize);
+        MemCopyData(OutData, InData, BlockSize * ElementSize, MemSpace);
         InData += SourceBlockStride;
         OutData += DestBlockStride;
     }
@@ -1353,7 +1433,7 @@ void BP5Deserializer::ExtractSelectionFromPartialCM(
     int ElementSize, size_t Dims, const size_t *GlobalDims,
     const size_t *PartialOffsets, const size_t *PartialCounts,
     const size_t *SelectionOffsets, const size_t *SelectionCounts,
-    const char *InData, char *OutData)
+    const char *InData, char *OutData, MemorySpace MemSpace)
 {
     int BlockSize;
     int SourceBlockStride = 0;
@@ -1442,18 +1522,17 @@ void BP5Deserializer::ExtractSelectionFromPartialCM(
     OutData += DestBlockStartOffset;
     for (int i = 0; i < BlockCount; i++)
     {
-        memcpy(OutData, InData, BlockSize * ElementSize);
+        MemCopyData(OutData, InData, BlockSize * ElementSize, MemSpace);
         InData += SourceBlockStride;
         OutData += DestBlockStride;
     }
     free(FirstIndex);
 }
 
-BP5Deserializer::BP5Deserializer(int WriterCount, bool WriterIsRowMajor,
-                                 bool ReaderIsRowMajor, bool RandomAccessMode)
+BP5Deserializer::BP5Deserializer(bool WriterIsRowMajor, bool ReaderIsRowMajor,
+                                 bool RandomAccessMode)
 : m_WriterIsRowMajor{WriterIsRowMajor}, m_ReaderIsRowMajor{ReaderIsRowMajor},
-  m_WriterCohortSize{static_cast<size_t>(WriterCount)}, m_RandomAccessMode{
-                                                            RandomAccessMode}
+  m_RandomAccessMode{RandomAccessMode}
 {
     FMContext Tmp = create_local_FMcontext();
     ReaderFFSContext = create_FFSContext_FM(Tmp);
@@ -1489,7 +1568,7 @@ BP5Deserializer::~BP5Deserializer()
 }
 
 void *BP5Deserializer::GetMetadataBase(BP5VarRec *VarRec, size_t Step,
-                                       size_t WriterRank)
+                                       size_t WriterRank) const
 {
     MetaArrayRec *writer_meta_base = NULL;
     if (m_RandomAccessMode)
@@ -1529,47 +1608,67 @@ void *BP5Deserializer::GetMetadataBase(BP5VarRec *VarRec, size_t Step,
     return writer_meta_base;
 }
 
-Engine::MinVarInfo *BP5Deserializer::MinBlocksInfo(const VariableBase &Var,
-                                                   size_t Step)
+MinVarInfo *BP5Deserializer::MinBlocksInfo(const VariableBase &Var, size_t Step)
 {
     BP5VarRec *VarRec = LookupVarByKey((void *)&Var);
 
-    Engine::MinVarInfo *MV =
-        new Engine::MinVarInfo(VarRec->DimCount, VarRec->GlobalDims);
+    MinVarInfo *MV = new MinVarInfo(VarRec->DimCount, VarRec->GlobalDims);
 
+    const size_t writerCohortSize = WriterCohortSize(Step);
+    size_t Id = 0;
+    MV->Step = Step;
     MV->Dims = VarRec->DimCount;
-    MV->Shape = VarRec->GlobalDims;
+    MV->Shape = NULL;
     MV->IsReverseDims =
         ((MV->Dims > 1) && (m_WriterIsRowMajor != m_ReaderIsRowMajor));
 
+    MV->WasLocalVar = (VarRec->OrigShapeID == ShapeID::LocalValue);
     if ((VarRec->OrigShapeID == ShapeID::LocalValue) ||
         (VarRec->OrigShapeID == ShapeID::GlobalValue))
     {
-        MV->IsValue = true;
-        MV->BlocksInfo.reserve(m_WriterCohortSize);
-        for (size_t WriterRank = 0; WriterRank < m_WriterCohortSize;
-             WriterRank++)
+        if (VarRec->OrigShapeID == ShapeID::LocalValue)
+        {
+            // appear as an array locally
+            MV->IsValue = false;
+            MV->Dims = 1;
+            MV->Shape = (size_t *)writerCohortSize;
+        }
+        else
+        {
+            MV->IsValue = true;
+        }
+        MV->BlocksInfo.reserve(writerCohortSize);
+
+        for (size_t WriterRank = 0; WriterRank < writerCohortSize; WriterRank++)
         {
             MetaArrayRec *writer_meta_base =
                 (MetaArrayRec *)GetMetadataBase(VarRec, Step, WriterRank);
             if (writer_meta_base)
             {
-                Engine::MinBlockInfo Blk;
+                MinBlockInfo Blk;
                 Blk.WriterID = WriterRank;
-                Blk.BlockID = 0;
+                Blk.BlockID = Id++;
                 Blk.BufferP = writer_meta_base;
+                if (VarRec->OrigShapeID == ShapeID::LocalValue)
+                {
+                    Blk.Count = (size_t *)1;
+                    Blk.Start = (size_t *)WriterRank;
+                }
                 MV->BlocksInfo.push_back(Blk);
             }
         }
         return MV;
     }
-    size_t Id = 0;
-    for (size_t WriterRank = 0; WriterRank < m_WriterCohortSize; WriterRank++)
+    for (size_t WriterRank = 0; WriterRank < writerCohortSize; WriterRank++)
     {
         MetaArrayRec *writer_meta_base =
             (MetaArrayRec *)GetMetadataBase(VarRec, Step, WriterRank);
         if (writer_meta_base)
         {
+            if (MV->Shape == NULL)
+            {
+                MV->Shape = writer_meta_base->Shape;
+            }
             size_t WriterBlockCount =
                 writer_meta_base->Dims
                     ? writer_meta_base->DBCount / writer_meta_base->Dims
@@ -1580,7 +1679,7 @@ Engine::MinVarInfo *BP5Deserializer::MinBlocksInfo(const VariableBase &Var,
     MV->BlocksInfo.reserve(Id);
 
     Id = 0;
-    for (size_t WriterRank = 0; WriterRank < m_WriterCohortSize; WriterRank++)
+    for (size_t WriterRank = 0; WriterRank < writerCohortSize; WriterRank++)
     {
         MetaArrayRec *writer_meta_base =
             (MetaArrayRec *)GetMetadataBase(VarRec, Step, WriterRank);
@@ -1589,11 +1688,11 @@ Engine::MinVarInfo *BP5Deserializer::MinBlocksInfo(const VariableBase &Var,
             continue;
         size_t WriterBlockCount =
             MV->Dims ? writer_meta_base->DBCount / MV->Dims : 1;
-        core::Engine::MinMaxStruct *MMs = NULL;
+        MinMaxStruct *MMs = NULL;
         if (VarRec->MinMaxOffset != SIZE_MAX)
         {
-            MMs = *(core::Engine::MinMaxStruct **)(((char *)writer_meta_base) +
-                                                   VarRec->MinMaxOffset);
+            MMs = *(MinMaxStruct **)(((char *)writer_meta_base) +
+                                     VarRec->MinMaxOffset);
         }
         for (size_t i = 0; i < WriterBlockCount; i++)
         {
@@ -1603,7 +1702,7 @@ Engine::MinVarInfo *BP5Deserializer::MinBlocksInfo(const VariableBase &Var,
                 Offsets = writer_meta_base->Offsets + (i * MV->Dims);
             if (writer_meta_base->Count)
                 Count = writer_meta_base->Count + (i * MV->Dims);
-            Engine::MinBlockInfo Blk;
+            MinBlockInfo Blk;
             Blk.WriterID = WriterRank;
             Blk.BlockID = Id++;
             Blk.Start = Offsets;
@@ -1628,7 +1727,7 @@ Engine::MinVarInfo *BP5Deserializer::MinBlocksInfo(const VariableBase &Var,
     return MV;
 }
 
-static void ApplyElementMinMax(Engine::MinMaxStruct &MinMax, DataType Type,
+static void ApplyElementMinMax(MinMaxStruct &MinMax, DataType Type,
                                void *Element)
 {
     switch (Type)
@@ -1725,7 +1824,8 @@ size_t BP5Deserializer::RelativeToAbsoluteStep(const BP5VarRec *VarRec,
     while (RelStep != 0)
     {
         size_t WriterRank = 0;
-        while (WriterRank < m_WriterCohortSize)
+        const size_t writerCohortSize = WriterCohortSize(AbsStep);
+        while (WriterRank < writerCohortSize)
         {
             BP5MetadataInfoStruct *BaseData;
             BaseData = (BP5MetadataInfoStruct
@@ -1735,7 +1835,7 @@ size_t BP5Deserializer::RelativeToAbsoluteStep(const BP5VarRec *VarRec,
             {
                 // variable appeared on this step
                 RelStep--;
-                break; // exit while (WriterRank < m_WriterCohortSize)
+                break; // exit while (WriterRank < writerCohortSize)
             }
             WriterRank++;
         }
@@ -1744,8 +1844,70 @@ size_t BP5Deserializer::RelativeToAbsoluteStep(const BP5VarRec *VarRec,
     return AbsStep;
 }
 
+void BP5Deserializer::GetAbsoluteSteps(const VariableBase &Var,
+                                       std::vector<size_t> &keys) const
+{
+    BP5VarRec *VarRec = LookupVarByKey((void *)&Var);
+    if (!m_RandomAccessMode)
+        return;
+
+    for (size_t Step = 0; Step < m_ControlArray.size(); Step++)
+    {
+        for (size_t WriterRank = 0; WriterRank < WriterCohortSize(Step);
+             WriterRank++)
+        {
+            MetaArrayRec *writer_meta_base =
+                (MetaArrayRec *)GetMetadataBase(VarRec, Step, WriterRank);
+            if (writer_meta_base)
+            {
+                keys.push_back(Step);
+                break;
+            }
+        }
+    }
+}
+
+Dims *BP5Deserializer::VarShape(const VariableBase &Var,
+                                const size_t RelStep) const
+{
+    BP5VarRec *VarRec = LookupVarByKey((void *)&Var);
+    if (VarRec->OrigShapeID != ShapeID::GlobalArray)
+    {
+        return nullptr;
+    }
+    size_t AbsStep = RelStep;
+    if (m_RandomAccessMode)
+    {
+        if (RelStep == adios2::EngineCurrentStep)
+        {
+            AbsStep = VarRec->AbsStepFromRel[Var.m_StepsStart];
+        }
+        else
+        {
+            AbsStep = VarRec->AbsStepFromRel[RelStep];
+        }
+    }
+    for (size_t WriterRank = 0; WriterRank < WriterCohortSize(AbsStep);
+         WriterRank++)
+    {
+        MetaArrayRec *writer_meta_base =
+            (MetaArrayRec *)GetMetadataBase(VarRec, AbsStep, WriterRank);
+        if (writer_meta_base && writer_meta_base->Shape)
+        {
+            Dims *Shape = new Dims();
+            Shape->reserve(writer_meta_base->Dims);
+            for (size_t i = 0; i < writer_meta_base->Dims; i++)
+            {
+                Shape->push_back(writer_meta_base->Shape[i]);
+            }
+            return Shape;
+        }
+    }
+    return nullptr;
+}
+
 bool BP5Deserializer::VariableMinMax(const VariableBase &Var, const size_t Step,
-                                     Engine::MinMaxStruct &MinMax)
+                                     MinMaxStruct &MinMax)
 {
     BP5VarRec *VarRec = LookupVarByKey((void *)&Var);
     if ((VarRec->OrigShapeID == ShapeID::LocalArray) ||
@@ -1753,7 +1915,8 @@ bool BP5Deserializer::VariableMinMax(const VariableBase &Var, const size_t Step,
     {
         if (VarRec->MinMaxOffset == SIZE_MAX)
         {
-            throw std::logic_error(
+            helper::Throw<std::logic_error>(
+                "Toolkit", "format::BP5Deserializer", "VariableMinMax",
                 "Min or Max requests for Variable for which Min/Max was not "
                 "supplied by the writer.  Specify parameter StatsLevel > 0 to "
                 "include writer-side data statistics.");
@@ -1762,6 +1925,7 @@ bool BP5Deserializer::VariableMinMax(const VariableBase &Var, const size_t Step,
 
     MinMax.Init(VarRec->Type);
 
+    const size_t writerCohortSize = WriterCohortSize(Step);
     size_t StartStep = Step, StopStep = Step + 1;
     if (Step == DefaultSizeT)
     {
@@ -1775,7 +1939,7 @@ bool BP5Deserializer::VariableMinMax(const VariableBase &Var, const size_t Step,
         if ((VarRec->OrigShapeID == ShapeID::LocalArray) ||
             (VarRec->OrigShapeID == ShapeID::GlobalArray))
         {
-            for (size_t WriterRank = 0; WriterRank < m_WriterCohortSize;
+            for (size_t WriterRank = 0; WriterRank < writerCohortSize;
                  WriterRank++)
             {
                 MetaArrayRec *writer_meta_base =
@@ -1807,7 +1971,7 @@ bool BP5Deserializer::VariableMinMax(const VariableBase &Var, const size_t Step,
             void *writer_meta_base = NULL;
             size_t WriterRank = 0;
             while ((writer_meta_base == NULL) &&
-                   (WriterRank < m_WriterCohortSize))
+                   (WriterRank < writerCohortSize))
             {
                 writer_meta_base =
                     GetMetadataBase(VarRec, RelStep, WriterRank++);
@@ -1816,7 +1980,7 @@ bool BP5Deserializer::VariableMinMax(const VariableBase &Var, const size_t Step,
         }
         else if (VarRec->OrigShapeID == ShapeID::LocalValue)
         {
-            for (size_t WriterRank = 0; WriterRank < m_WriterCohortSize;
+            for (size_t WriterRank = 0; WriterRank < writerCohortSize;
                  WriterRank++)
             {
                 void *writer_meta_base =

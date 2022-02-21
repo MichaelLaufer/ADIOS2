@@ -27,7 +27,13 @@ class BP5Engine
 {
 public:
     int m_RankMPI = 0;
-    /* metadata index table*/
+    /* metadata index table
+            0: pos in memory for step (after filtered read)
+            1: size of metadata
+            2: flush count
+            3: pos in index where data offsets are enumerated
+            4: abs. pos in metadata File for step
+    */
     std::unordered_map<uint64_t, std::vector<uint64_t>> m_MetadataIndexTable;
 
     struct Minifooter
@@ -47,11 +53,9 @@ public:
     static constexpr size_t m_IndexHeaderSize = 64;
     static constexpr size_t m_EndianFlagPosition = 36;
     static constexpr size_t m_BPVersionPosition = 37;
-    static constexpr size_t m_ActiveFlagPosition = 38;
-    static constexpr size_t m_BPMinorVersionPosition = 39;
-    static constexpr size_t m_WriterCountPosition = 40;
-    static constexpr size_t m_AggregatorCountPosition = 44;
-    static constexpr size_t m_ColumnMajorFlagPosition = 48;
+    static constexpr size_t m_BPMinorVersionPosition = 38;
+    static constexpr size_t m_ActiveFlagPosition = 39;
+    static constexpr size_t m_ColumnMajorFlagPosition = 40;
     static constexpr size_t m_VersionTagPosition = 0;
     static constexpr size_t m_VersionTagLength = 32;
 
@@ -118,8 +122,12 @@ public:
     MACRO(verbose, Int, int, 0)                                                \
     MACRO(CollectiveMetadata, Bool, bool, true)                                \
     MACRO(NumAggregators, UInt, unsigned int, 0)                               \
+    MACRO(AggregatorRatio, UInt, unsigned int, 0)                              \
     MACRO(NumSubFiles, UInt, unsigned int, 999999)                             \
-    MACRO(FileSystemPageSize, UInt, unsigned int, 4096)                        \
+    MACRO(StripeSize, UInt, unsigned int, 4096)                                \
+    MACRO(DirectIO, Bool, bool, false)                                         \
+    MACRO(DirectIOAlignOffset, UInt, unsigned int, 512)                        \
+    MACRO(DirectIOAlignBuffer, UInt, unsigned int, 0)                          \
     MACRO(AggregationType, AggregationType, int,                               \
           (int)AggregationType::TwoLevelShm)                                   \
     MACRO(AsyncOpen, Bool, bool, true)                                         \
@@ -130,6 +138,8 @@ public:
     MACRO(BufferChunkSize, SizeBytes, size_t, DefaultBufferChunkSize)          \
     MACRO(MaxShmSize, SizeBytes, size_t, DefaultMaxShmSize)                    \
     MACRO(BufferVType, BufferVType, int, (int)BufferVType::ChunkVType)         \
+    MACRO(AppendAfterSteps, Int, int, INT_MAX)                                 \
+    MACRO(SelectSteps, String, std::string, (char *)(intptr_t)0)               \
     MACRO(ReaderShortCircuitReads, Bool, bool, false)
 
     struct BP5Params
