@@ -103,7 +103,8 @@ if(ADIOS2_HAVE_MPI AND MPIEXEC_EXECUTABLE)
    endforeach()
 endif()
 
-set (SIMPLE_TESTS "1x1;1x1DefSync;1x1Flush")
+set (SIMPLE_TESTS "1x1;1x1DefSync")
+set (BP5File_ONLY_TESTS "1x1DataWrite")
 
 set (SIMPLE_FORTRAN_TESTS "")
 if(ADIOS2_HAVE_Fortran)
@@ -191,8 +192,8 @@ if(NOT WIN32)    # not on windows
     list (FILTER BP_TESTS EXCLUDE REGEX ".*SharedVar$")
     # The nobody-writes-data-in-a-timestep tests don't work for any BP file engine
     list (FILTER BP_TESTS EXCLUDE REGEX ".*NoData$")
-    # BP3 and BP4 semantics on flush differ from BP5
-    list (FILTER BP_TESTS EXCLUDE REGEX ".*Flush.*")
+    # BP3 and BP4 don't do PerformDataWrite
+    list (FILTER BP_TESTS EXCLUDE REGEX ".*DataWrite.*")
     foreach(test ${BP_TESTS})
         add_common_test(${test} BP4)
     endforeach()
@@ -205,9 +206,19 @@ endif()
 
 #  BP5 tests
 if(ADIOS2_HAVE_BP5)
-    set (BP5_TESTS ${ALL_SIMPLE_TESTS})
+    set (BP5_TESTS ${ALL_SIMPLE_TESTS} ${SPECIAL_TESTS})
     # Delayed reader not worth testing on file engines
     list (FILTER BP5_TESTS EXCLUDE REGEX "DelayedReader")
+    # Discard not a feature of BP5
+    list (FILTER BP5_TESTS EXCLUDE REGEX ".*DiscardWriter.1x1")
+    # PreciousTimestep not a feature of BP5
+    list (FILTER BP5_TESTS EXCLUDE REGEX ".*PreciousTimestep")
+    # LatestTimestep not a feature of BP5
+    list (FILTER BP5_TESTS EXCLUDE REGEX ".*LatestReader")
+    # KillWriter fails with BP5
+    list (FILTER BP5_TESTS EXCLUDE REGEX ".*KillWriter")
+    # KillReaders  We swear this isn't necessary for BP5 streaming
+    list (FILTER BP5_TESTS EXCLUDE REGEX ".*KillReaders")
     foreach(test ${BP5_TESTS})
         add_common_test(${test} BP5)
     endforeach()
@@ -223,7 +234,7 @@ if(NOT MSVC)    # not on windows
     MutateTestSet( BP4_STREAM_TESTS "BPS" reader "OpenTimeoutSecs=10,BeginStepPollingFrequencySecs=0.1" "${BP4_STREAM_TESTS}")
     # SharedVars fail with BP4_streaming*
     list (FILTER BP4_STREAM_TESTS EXCLUDE REGEX ".*SharedVar.BPS$")
-    # Discard not a feature of BP4
+   # Discard not a feature of BP4
     list (FILTER BP4_STREAM_TESTS EXCLUDE REGEX ".*DiscardWriter.1x1.*BPS$")
     # PreciousTimestep not a feature of BP4
     list (FILTER BP4_STREAM_TESTS EXCLUDE REGEX ".*Precious.*BPS$")
@@ -236,7 +247,7 @@ if(NOT MSVC)    # not on windows
     # KillWriter fails with BP4
     list (FILTER BP4_STREAM_TESTS EXCLUDE REGEX ".*KillWriter.*BPS$")
     # KillReaders  We swear this isn't necessary for BP4 streaming
-    list (FILTER BP4_STREAM_TESTS EXCLUDE REGEX ".*KillReaders.*BPS$")
+    list (FILTER BP4_STREAM_TESTS EXCLUDE REGEX ".*KillReaders.*BPS$") 
     # SharedVars fail with BP4_streaming*
     list (FILTER BP4_STREAM_TESTS EXCLUDE REGEX ".*SharedVar.BPS$")
     # Local fail with BP4_streaming*

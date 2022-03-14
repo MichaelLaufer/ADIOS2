@@ -59,6 +59,15 @@ public:
     static constexpr size_t m_VersionTagPosition = 0;
     static constexpr size_t m_VersionTagLength = 32;
 
+    static constexpr uint8_t m_BP5MinorVersion = 2;
+
+    /** Index record types */
+    enum IndexRecord
+    {
+        StepRecord = 's',
+        WriterMapRecord = 'w',
+    };
+
     std::vector<std::string>
     GetBPSubStreamNames(const std::vector<std::string> &names,
                         size_t subFileIndex) const noexcept;
@@ -113,17 +122,17 @@ public:
     };
 
 #define BP5_FOREACH_PARAMETER_TYPE_4ARGS(MACRO)                                \
-    MACRO(OpenTimeoutSecs, Int, int, 3600)                                     \
-    MACRO(BeginStepPollingFrequencySecs, Int, int, 0)                          \
+    MACRO(OpenTimeoutSecs, Float, float, -1.0f)                                \
+    MACRO(BeginStepPollingFrequencySecs, Float, float, 1.0f)                   \
     MACRO(StreamReader, Bool, bool, false)                                     \
     MACRO(BurstBufferDrain, Bool, bool, true)                                  \
-    MACRO(BurstBufferPath, String, std::string, (char *)(intptr_t)0)           \
+    MACRO(BurstBufferPath, String, std::string, "")                            \
     MACRO(NodeLocal, Bool, bool, false)                                        \
     MACRO(verbose, Int, int, 0)                                                \
     MACRO(CollectiveMetadata, Bool, bool, true)                                \
     MACRO(NumAggregators, UInt, unsigned int, 0)                               \
     MACRO(AggregatorRatio, UInt, unsigned int, 0)                              \
-    MACRO(NumSubFiles, UInt, unsigned int, 999999)                             \
+    MACRO(NumSubFiles, UInt, unsigned int, 0)                                  \
     MACRO(StripeSize, UInt, unsigned int, 4096)                                \
     MACRO(DirectIO, Bool, bool, false)                                         \
     MACRO(DirectIOAlignOffset, UInt, unsigned int, 512)                        \
@@ -139,7 +148,7 @@ public:
     MACRO(MaxShmSize, SizeBytes, size_t, DefaultMaxShmSize)                    \
     MACRO(BufferVType, BufferVType, int, (int)BufferVType::ChunkVType)         \
     MACRO(AppendAfterSteps, Int, int, INT_MAX)                                 \
-    MACRO(SelectSteps, String, std::string, (char *)(intptr_t)0)               \
+    MACRO(SelectSteps, String, std::string, "")                                \
     MACRO(ReaderShortCircuitReads, Bool, bool, false)
 
     struct BP5Params

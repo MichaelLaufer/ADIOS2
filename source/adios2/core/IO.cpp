@@ -131,8 +131,8 @@ std::unordered_map<std::string, IO::EngineFactoryEntry> Factory = {
      {IO::NoEngine("ERROR: nullcore engine does not support read mode"),
       IO::MakeEngine<engine::NullCoreWriter>}},
     {"plugin",
-     {IO::MakeEngine<engine::PluginEngine>,
-      IO::MakeEngine<engine::PluginEngine>}},
+     {IO::MakeEngine<plugin::PluginEngine>,
+      IO::MakeEngine<plugin::PluginEngine>}},
 };
 
 // Synchronize access to the factory in case one thread is
@@ -143,6 +143,7 @@ std::unordered_map<std::string, IO::EngineFactoryEntry>::const_iterator
 FactoryLookup(std::string const &name)
 {
     std::lock_guard<std::mutex> factoryGuard(FactoryMutex);
+    (void)factoryGuard;
     return Factory.find(name);
 }
 

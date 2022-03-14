@@ -31,6 +31,7 @@ add_library(adios2_core
   helper/adiosMath.cpp
   helper/adiosMemory.cpp
   helper/adiosNetwork.cpp
+  helper/adiosPluginManager.cpp
   helper/adiosString.cpp helper/adiosString.tcc
   helper/adiosSystem.cpp
   helper/adiosType.cpp
@@ -58,6 +59,7 @@ add_library(adios2_core
   engine/nullcore/NullCoreWriter.cpp engine/nullcore/NullCoreWriter.tcc
 
   engine/plugin/PluginEngine.cpp engine/plugin/PluginEngineInterface.cpp
+  operator/plugin/PluginOperator.cpp operator/plugin/PluginOperatorInterface.cpp
 #toolkit
   toolkit/format/buffer/Buffer.cpp
   toolkit/format/buffer/BufferV.cpp
@@ -167,9 +169,13 @@ if(ADIOS2_HAVE_MPI)
         core/IOMPI.cpp
         helper/adiosCommMPI.h helper/adiosCommMPI.cpp
         helper/adiosMpiHandshake.h helper/adiosMpiHandshake.cpp
-        engine/ssc/SscReader.cpp engine/ssc/SscReader.tcc
-        engine/ssc/SscWriter.cpp engine/ssc/SscWriter.tcc
         engine/ssc/SscHelper.cpp
+        engine/ssc/SscWriter.cpp
+        engine/ssc/SscWriterBase.cpp
+        engine/ssc/SscWriterGeneric.cpp
+        engine/ssc/SscReader.cpp
+        engine/ssc/SscReaderBase.cpp
+        engine/ssc/SscReaderGeneric.cpp
         )
     set_property(TARGET adios2_core_mpi PROPERTY EXPORT_NAME core_mpi)
     set_property(TARGET adios2_core_mpi PROPERTY OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFFIX}_core_mpi)
@@ -228,8 +234,8 @@ if(ADIOS2_HAVE_DataSpaces)
   add_subdirectory(toolkit/dataspaces)
   target_sources(adios2_core_mpi PRIVATE
      toolkit/dataspaces/ds_writer.c
-     engine/dataspaces/DataSpacesWriter.cpp engine/dataspaces/DataSpacesWriter.tcc 
-     engine/dataspaces/DataSpacesReader.cpp engine/dataspaces/DataSpacesReader.tcc 
+     engine/dataspaces/DataSpacesWriter.cpp engine/dataspaces/DataSpacesWriter.tcc
+     engine/dataspaces/DataSpacesReader.cpp engine/dataspaces/DataSpacesReader.tcc
   )
   target_link_libraries(adios2_core_mpi PRIVATE DataSpaces::DataSpaces)
 endif()
@@ -260,6 +266,7 @@ if(ADIOS2_HAVE_LIBPRESSIO)
 endif()
 
 if(ADIOS2_HAVE_MGARD)
+  target_sources(adios2_core PRIVATE operator/compress/CompressMGARDPlus.cpp)
   target_sources(adios2_core PRIVATE operator/compress/CompressMGARD.cpp)
   target_link_libraries(adios2_core PRIVATE MGARD::MGARD)
 endif()
@@ -287,14 +294,18 @@ if(ADIOS2_HAVE_HDF5)
   set(adios2_hdf5_objs adios2_hdf5)
   if(HDF5_IS_PARALLEL)
     list(APPEND adios2_hdf5_objs adios2_hdf5_mpi)
-    set_property(SOURCE core/IOMPI.cpp APPEND PROPERTY COMPILE_DEFINITIONS ADIOS2_HAVE_HDF5_PARALLEL)
+    set_property(SOURCE core/IOMPI.cpp APPEND PROPERTY
+      COMPILE_DEFINITIONS ADIOS2_HAVE_HDF5_PARALLEL
+      )
     add_library(adios2_hdf5_mpi OBJECT
       toolkit/interop/hdf5/HDF5CommonMPI.cpp
       )
     target_compile_definitions(adios2_hdf5_mpi PRIVATE ADIOS2_USE_MPI)
     target_link_libraries(adios2_core_mpi PRIVATE adios2_hdf5_mpi)
     set_property(TARGET adios2_hdf5_mpi PROPERTY EXPORT_NAME hdf5_mpi)
-    set_property(TARGET adios2_hdf5_mpi PROPERTY OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFFIX}_hdf5_mpi)
+    set_property(TARGET adios2_hdf5_mpi PROPERTY
+      OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFFIX}_hdf5_mpi
+      )
   endif()
 
   foreach(lib IN LISTS adios2_hdf5_objs)
@@ -382,6 +393,12 @@ install(DIRECTORY helper/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/adios2/helper COMPONENT adios2_core-development
   FILES_MATCHING PATTERN "*.h"
   PATTERN "*.inl"
+)
+
+install(DIRECTORY operator/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/adios2/operator COMPONENT adios2_core-development
+  FILES_MATCHING PATTERN "*/*.h"
+  PATTERN "*/*.inl"
 )
 
 install(DIRECTORY toolkit/

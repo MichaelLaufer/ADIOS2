@@ -11,6 +11,7 @@
 #include "OperatorFactory.h"
 #include "adios2/helper/adiosFunctions.h"
 #include "adios2/operator/compress/CompressNull.h"
+#include "adios2/operator/plugin/PluginOperator.h"
 #include <numeric>
 
 #ifdef ADIOS2_HAVE_BLOSC
@@ -27,6 +28,7 @@
 
 #ifdef ADIOS2_HAVE_MGARD
 #include "adios2/operator/compress/CompressMGARD.h"
+#include "adios2/operator/compress/CompressMGARDPlus.h"
 #endif
 
 #ifdef ADIOS2_HAVE_PNG
@@ -62,6 +64,8 @@ std::string OperatorTypeToString(const Operator::OperatorType type)
         return "libpressio";
     case Operator::COMPRESS_MGARD:
         return "mgard";
+    case Operator::COMPRESS_MGARDPLUS:
+        return "mgardplus";
     case Operator::COMPRESS_PNG:
         return "png";
     case Operator::COMPRESS_SIRIUS:
@@ -70,6 +74,8 @@ std::string OperatorTypeToString(const Operator::OperatorType type)
         return "sz";
     case Operator::COMPRESS_ZFP:
         return "zfp";
+    case Operator::PLUGIN_INTERFACE:
+        return "plugin";
     default:
         return "null";
     }
@@ -106,6 +112,12 @@ std::shared_ptr<Operator> MakeOperator(const std::string &type,
         ret = std::make_shared<compress::CompressMGARD>(parameters);
 #endif
     }
+    else if (typeLowerCase == "mgardplus")
+    {
+#ifdef ADIOS2_HAVE_MGARD
+        ret = std::make_shared<compress::CompressMGARDPlus>(parameters);
+#endif
+    }
     else if (typeLowerCase == "png")
     {
 #ifdef ADIOS2_HAVE_PNG
@@ -129,6 +141,10 @@ std::shared_ptr<Operator> MakeOperator(const std::string &type,
 #ifdef ADIOS2_HAVE_ZFP
         ret = std::make_shared<compress::CompressZFP>(parameters);
 #endif
+    }
+    else if (typeLowerCase == "plugin")
+    {
+        ret = std::make_shared<plugin::PluginOperator>(parameters);
     }
     else if (typeLowerCase == "null")
     {

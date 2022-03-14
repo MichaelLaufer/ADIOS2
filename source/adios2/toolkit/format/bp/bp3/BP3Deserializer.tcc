@@ -528,7 +528,17 @@ void BP3Deserializer::PostDataRead(
         char *preOpData = m_ThreadBuffers[threadID][0].data();
         const char *postOpData = m_ThreadBuffers[threadID][1].data();
 
-        core::Decompress(postOpData, blockOperationInfo.PayloadSize, preOpData);
+        std::shared_ptr<core::Operator> op = nullptr;
+        for (auto &o : blockInfo.Operations)
+        {
+            if (o->m_Category == "compress" || o->m_Category == "plugin")
+            {
+                op = o;
+                break;
+            }
+        }
+        core::Decompress(postOpData, blockOperationInfo.PayloadSize, preOpData,
+                         op);
 
         // clip block to match selection
         helper::ClipVector(m_ThreadBuffers[threadID][0],
@@ -581,11 +591,11 @@ void BP3Deserializer::PostDataRead(
             intersectStart[d] += blockInfo.MemoryStart[d];
             blockStart[d] += blockInfo.MemoryStart[d];
         }
-        helper::NdCopy<T>(
-            m_ThreadBuffers[threadID][0].data(), intersectStart, intersectCount,
-            true, true, reinterpret_cast<char *>(blockInfo.Data),
-            intersectStart, intersectCount, true, true, intersectStart,
-            blockCount, memoryStart, blockInfo.MemoryCount, false);
+        helper::NdCopy(m_ThreadBuffers[threadID][0].data(), intersectStart,
+                       intersectCount, true, true,
+                       reinterpret_cast<char *>(blockInfo.Data), intersectStart,
+                       intersectCount, true, true, sizeof(T), intersectStart,
+                       blockCount, memoryStart, blockInfo.MemoryCount, false);
     }
     else
     {

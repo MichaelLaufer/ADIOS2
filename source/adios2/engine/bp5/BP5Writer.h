@@ -50,6 +50,7 @@ public:
                          const float timeoutSeconds = -1.0) final;
     size_t CurrentStep() const final;
     void PerformPuts() final;
+    void PerformDataWrite() final;
     void EndStep() final;
     void Flush(const int transportIndex = -1) final;
 
@@ -172,12 +173,6 @@ private:
     void WriteData_TwoLevelShm(format::BufferV *Data);
     void WriteData_TwoLevelShm_Async(format::BufferV *Data);
 
-    void PopulateMetadataIndexFileContent(
-        format::BufferSTL &buffer, const uint64_t currentStep,
-        const uint64_t mpirank, const uint64_t pgIndexStart,
-        const uint64_t variablesIndexStart, const uint64_t attributesIndexStart,
-        const uint64_t currentStepEndPos, const uint64_t currentTimeStamp);
-
     void UpdateActiveFlag(const bool active);
 
     void WriteCollectiveMetadataFile(const bool isFinal = false);
@@ -201,8 +196,6 @@ private:
     bool m_IAmDraining = false;
     bool m_IAmWritingData = false;
     helper::Comm *DataWritingComm; // processes that write the same data file
-    bool m_IAmWritingDataHeader = false;
-
     adios2::profiling::JSONProfiler m_Profiler;
 
 private:
@@ -232,13 +225,10 @@ private:
 
     bool m_MarshalAttributesNecessary = true;
 
-    // where each writer rank writes its data, init in InitBPBuffer;
-    std::vector<uint64_t> m_Assignment;
-
     std::vector<std::vector<size_t>> FlushPosSizeInfo;
 
-    void MakeHeader(format::BufferSTL &b, const std::string fileType,
-                    const bool isActive);
+    void MakeHeader(std::vector<char> &buffer, size_t &position,
+                    const std::string fileType, const bool isActive);
 
     std::vector<uint64_t> m_WriterSubfileMap; // rank => subfile index
 

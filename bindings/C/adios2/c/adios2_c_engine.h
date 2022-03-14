@@ -134,12 +134,20 @@ adios2_error adios2_put_by_name(adios2_engine *engine,
 
 /**
  * Performs all the adios2_put and adios2_put_by_name called with mode
- * adios2_mode_deferred, up to this point, by putting the data in the Engine.
- * User data can be reused after this point.
+ * adios2_mode_deferred, up to this point, by copying user data into internal
+ * ADIOS buffers. User data can be reused after this point.
  * @param engine handler for a particular engine where data will be put
  * @return adios2_error 0: success, see enum adios2_error for errors
  */
 adios2_error adios2_perform_puts(adios2_engine *engine);
+
+/**
+ * Write array data to disk.  This may relieve memory pressure by clearing ADIOS
+ * buffers.  It is a collective call. User data can be reused after this point.
+ * @param engine handler for a particular engine where data will be put
+ * @return adios2_error 0: success, see enum adios2_error for errors
+ */
+adios2_error adios2_perform_data_write(adios2_engine *engine);
 
 //***************** GET *****************
 /**
@@ -267,12 +275,18 @@ adios2_error adios2_lock_reader_selections(adios2_engine *engine);
 /**
  * Get the list of blocks for a variable in a given step.
  * In Streaming mode, step is unused, always the current step is processed.
- * @return Newly allocated adios2_varinfo structure, nullptr if step does not
- * exist. The pointer must be freed by user
+ * @return Newly allocated adios2_varinfo structure, NULL pointer if step does
+ * not exist. The memory must be freed by the adios2_free_blockinfo function
  */
 adios2_varinfo *adios2_inquire_blockinfo(adios2_engine *engine,
                                          adios2_variable *variable,
                                          const size_t step);
+/**
+ * free adios2_varinfo structure
+ * @param data_blocks
+ * @return void
+ */
+void adios2_free_blockinfo(adios2_varinfo *data_blocks);
 
 #ifdef __cplusplus
 } // end extern C

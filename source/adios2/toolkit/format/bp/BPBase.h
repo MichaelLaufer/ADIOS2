@@ -452,7 +452,9 @@ protected:
         transform_blosc = 11,
         transform_mgard = 12,
         transform_png = 13,
-        transform_sirius = 14
+        transform_sirius = 14,
+        transform_mgardplus = 15,
+        transform_plugin = 16
     };
 
     /** Supported transform types */

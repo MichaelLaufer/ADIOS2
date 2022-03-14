@@ -548,10 +548,8 @@ size_t BP5Serializer::CalcSize(const size_t Count, const size_t *Vals)
 
 void BP5Serializer::PerformPuts(bool forceCopyDeferred)
 {
-    //  Dump data for externs into iovec
-    DumpDeferredBlocks(forceCopyDeferred);
-
-    CurDataBuffer->CopyExternalToInternal();
+    // Copy all data for externs into iovec
+    DumpDeferredBlocks(true);
 }
 
 void BP5Serializer::DumpDeferredBlocks(bool forceCopyDeferred)
@@ -583,7 +581,6 @@ static void GetMinMax(const void *Data, size_t ElemCount, const DataType Type,
     else if (MemSpace == MemorySpace::CUDA &&                                  \
              Type == helper::GetDataType<T>())                                 \
     {                                                                          \
-        const size_t size = ElemCount * sizeof(T);                             \
         const T *values = (const T *)Data;                                     \
         helper::CUDAMinMax(values, ElemCount, MinMax.MinUnion.field_##N,       \
                            MinMax.MaxUnion.field_##N);                         \
@@ -664,6 +661,9 @@ void BP5Serializer::Marshal(void *Variable, const char *Name,
     }
     else
     {
+        MemorySpace MemSpace = MemorySpace::Host;
+        if (VB->IsCUDAPointer(Data))
+            MemSpace = MemorySpace::CUDA;
         MetaArrayRec *MetaEntry =
             (MetaArrayRec *)((char *)(MetadataBuf) + Rec->MetaOffset);
         size_t ElemCount = CalcSize(DimCount, Count);
@@ -681,8 +681,7 @@ void BP5Serializer::Marshal(void *Variable, const char *Name,
         MinMax.Init(Type);
         if ((m_StatsLevel > 0) && !Span)
         {
-            GetMinMax(Data, ElemCount, (DataType)Rec->Type, MinMax,
-                      VB->m_MemorySpace);
+            GetMinMax(Data, ElemCount, (DataType)Rec->Type, MinMax, MemSpace);
         }
 
         if (Rec->OperatorType)
@@ -711,10 +710,9 @@ void BP5Serializer::Marshal(void *Variable, const char *Name,
         {
             if (!DeferAddToVec)
             {
-                DataOffset =
-                    m_PriorDataBufferSizeTotal +
-                    CurDataBuffer->AddToVec(ElemCount * ElemSize, Data,
-                                            ElemSize, Sync, VB->m_MemorySpace);
+                DataOffset = m_PriorDataBufferSizeTotal +
+                             CurDataBuffer->AddToVec(ElemCount * ElemSize, Data,
+                                                     ElemSize, Sync, MemSpace);
             }
         }
         else
