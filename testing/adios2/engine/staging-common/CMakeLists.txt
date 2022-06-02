@@ -20,6 +20,7 @@ foreach(helper
     TestCommonWriteAttrs
     TestCommonWriteLocal
     TestCommonWriteShared
+    TestDistributionWrite
     TestDefSyncWrite
     TestCommonRead
     TestCommonReadR64
@@ -28,6 +29,7 @@ foreach(helper
     TestCommonReadAttrs
     TestCommonServer
     TestCommonClient
+    TestDistributionRead
     )
   add_executable(${helper} ${helper}.cpp)
 
@@ -136,7 +138,7 @@ set (ALL_SIMPLE_TESTS "")
 list (APPEND ALL_SIMPLE_TESTS ${SIMPLE_TESTS} ${SIMPLE_FORTRAN_TESTS} ${SIMPLE_MPI_TESTS} ${SIMPLE_ZFP_TESTS})
 
 set (SST_SPECIFIC_TESTS  "")
-list (APPEND SST_SPECIFIC_TESTS  "1x1.SstRUDP;1x1.LocalMultiblock")
+list (APPEND SST_SPECIFIC_TESTS  "1x1.SstRUDP;1x1.LocalMultiblock;RoundRobinDistribution.1x1x3;AllToAllDistribution.1x1x3")
 if (ADIOS2_HAVE_MPI)
   list (APPEND SST_SPECIFIC_TESTS  "2x3.SstRUDP;2x1.LocalMultiblock;5x3.LocalMultiblock;")
 endif()
@@ -172,7 +174,7 @@ foreach(test ${SST_TESTS})
     add_common_test(${test} SST)
 endforeach()
 
-if(ADIOS2_HAVE_MPI AND ADIOS2_RUN_MPI_MPMD_TESTS)
+if(ADIOS2_HAVE_MPI AND ADIOS2_RUN_MPI_MPMD_TESTS AND NOT MSVC)
     set (SSC_BASE_TESTS "1x1;1x1.Attrs;2x1;1x2;2x1ZeroDataVar;2x1ZeroDataR64;3x5;5x3;3x5LockGeometry")
     set (SSC_TESTS  ${SIMPLE_FORTRAN_TESTS} ${SIMPLE_MPI_FORTRAN_TESTS} ${SSC_BASE_TESTS})
     foreach(test ${SSC_TESTS})

@@ -14,8 +14,9 @@ add_library(adios2_core
   core/Operator.cpp
   core/Stream.cpp core/Stream.tcc
   core/Variable.cpp core/Variable.tcc
+  core/VariableStruct.cpp
   core/VariableBase.cpp
-  core/VariableCompound.cpp core/VariableCompound.tcc
+  core/Span.cpp core/Span.tcc
   core/Group.cpp core/Group.tcc
 
 #operator
@@ -54,9 +55,8 @@ add_library(adios2_core
   engine/inline/InlineReader.cpp engine/inline/InlineReader.tcc
   engine/inline/InlineWriter.cpp engine/inline/InlineWriter.tcc
 
-  engine/null/NullEngine.cpp
-
-  engine/nullcore/NullCoreWriter.cpp engine/nullcore/NullCoreWriter.tcc
+  engine/null/NullWriter.cpp engine/null/NullWriter.tcc
+  engine/null/NullReader.cpp engine/null/NullReader.tcc
 
   engine/plugin/PluginEngine.cpp engine/plugin/PluginEngineInterface.cpp
   operator/plugin/PluginOperator.cpp operator/plugin/PluginOperatorInterface.cpp
@@ -109,20 +109,16 @@ set_property(TARGET adios2_core PROPERTY OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFF
 
 set(maybe_adios2_core_cuda)
 if(ADIOS2_HAVE_CUDA)
-  enable_language(CUDA)
-
   add_library(adios2_core_cuda helper/adiosCUDA.cu)
   set_target_properties(adios2_core_cuda PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
-    CUDA_STANDARD 14
-    CUDA_STANDARD_REQUIRED ON
     CUDA_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
     INCLUDE_DIRECTORIES "$<BUILD_INTERFACE:${ADIOS2_SOURCE_DIR}/source>;$<BUILD_INTERFACE:${ADIOS2_BINARY_DIR}/source>"
     EXPORT_NAME core_cuda
     OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFFIX}_core_cuda
     )
-
+  target_compile_features(adios2_core_cuda PRIVATE cuda_std_14)
   target_link_libraries(adios2_core PRIVATE adios2_core_cuda CUDA::cudart CUDA::cuda_driver)
   set(maybe_adios2_core_cuda adios2_core_cuda)
 endif()
@@ -173,9 +169,11 @@ if(ADIOS2_HAVE_MPI)
         engine/ssc/SscWriter.cpp
         engine/ssc/SscWriterBase.cpp
         engine/ssc/SscWriterGeneric.cpp
+        engine/ssc/SscWriterNaive.cpp
         engine/ssc/SscReader.cpp
         engine/ssc/SscReaderBase.cpp
         engine/ssc/SscReaderGeneric.cpp
+        engine/ssc/SscReaderNaive.cpp
         )
     set_property(TARGET adios2_core_mpi PROPERTY EXPORT_NAME core_mpi)
     set_property(TARGET adios2_core_mpi PROPERTY OUTPUT_NAME adios2${ADIOS2_LIBRARY_SUFFIX}_core_mpi)

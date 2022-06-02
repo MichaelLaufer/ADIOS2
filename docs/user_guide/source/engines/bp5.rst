@@ -78,7 +78,7 @@ This engine allows the user to fine tune the buffering operations through the fo
 
    #. **BufferVType**: *chunk* or *malloc*, default is chunking. Chunking maintains the buffer as a list of memory blocks, either ADIOS-owned for sync-ed Puts and small Puts, and user-owned pointers of deferred Puts. Malloc maintains a single memory block and extends it (reallocates) whenever more data is buffered. Chunking incurs extra cost in I/O by having to write data in chunks (multiple write system calls), which can be helped by increasing *BufferChunkSize* and *MinDeferredSize*. Malloc incurs extra cost by reallocating memory whenever more data is buffered (by Put()), which can be helped by increasing *InitialBufferSize*. 
 
-   #. **BufferChunkSize**: (for *chunk* buffer type) The size of each memory buffer chunk, default is 128MB but it is worth increasing up to 2GB if possible for maximum write performance.
+   #. **BufferChunkSize**: (for *chunk* buffer type) The size of each memory buffer chunk, default is 128MB but it is worth increasing up to 2147381248 (a bit less than 2GB) if possible for maximum write performance.
 
    #. **MinDeferredSize**: (for *chunk* buffer type) Small user variables are always buffered, default is 4MB. 
 
@@ -121,6 +121,12 @@ This engine allows the user to fine tune the buffering operations through the fo
 
    #. **DirectIOAlignBuffer**: Alignment for memory pointers. Default is to be same as *DirectIOAlignOffset*. 
 
+#. Miscellaneous
+
+   #. **StatsLevel**: 1 turns on *Min/Max* calculation for every variable, 0 turns this off. Default is 1. It has some cost to generate this metadata so it can be turned off if there is no need for this information.
+
+   #. **MaxOpenFilesAtOnce**: Specify how many subfiles a process can keep open at once. Default is unlimited. If a dataset contains more subfiles than how many open file descriptors the system allows (see *ulimit -n*) then one can either try to raise that system limit (set it with *ulimit -n*), or set this parameter to force the reader to close some subfiles to stay within the limits.
+   
 
 ============================== ===================== ===========================================================
  **Key**                       **Value Format**      **Default** and Examples
@@ -143,8 +149,10 @@ This engine allows the user to fine tune the buffering operations through the fo
  AsyncOpen                      string On/Off         **On**, Off, true, false
  AsyncWrite                     string On/Off         **Off**, On, true, false
  DirectIO                       string On/Off         **Off**, On, true, false
- DirectIOAlignOffset            integer               **512**
- DirectIOAlignBuffer            integer               set to DirectIOAlignOffset if unset
+ DirectIOAlignOffset            integer >= 0          **512**
+ DirectIOAlignBuffer            integer >= 0          set to DirectIOAlignOffset if unset
+ StatsLevel                     integer, 0 or 1       **1**, ``0``
+ MaxOpenFilesAtOnce             integer >= 0          **UINT_MAX**, 1024, 1
 ============================== ===================== ===========================================================
 
 

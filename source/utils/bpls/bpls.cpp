@@ -403,11 +403,28 @@ bool introspectAsBPDir(const std::string &name) noexcept
     char patch = buffer[34];
     bool isBigEndian = static_cast<bool>(buffer[36]);
     uint8_t BPVersion = static_cast<uint8_t>(buffer[37]);
-    bool isActive = static_cast<bool>(buffer[38]);
-
-    printf("ADIOS-BP Version %d %s - ADIOS v%c.%c.%c %s\n", BPVersion,
-           (isBigEndian ? "Big Endian" : "Little Endian"), major, minor, patch,
-           (isActive ? "- active" : ""));
+    bool isActive = false;
+    if (BPVersion == 4)
+    {
+        isActive = static_cast<bool>(buffer[38]);
+        printf("ADIOS-BP Version %d %s - ADIOS v%c.%c.%c %s\n", BPVersion,
+               (isBigEndian ? "Big Endian" : "Little Endian"), major, minor,
+               patch, (isActive ? "- active" : ""));
+    }
+    else if (BPVersion == 5)
+    {
+        uint8_t minversion = static_cast<uint8_t>(buffer[38]);
+        isActive = static_cast<bool>(buffer[39]);
+        printf("ADIOS-BP Version %d.%d %s - ADIOS v%c.%c.%c %s\n", BPVersion,
+               minversion, (isBigEndian ? "Big Endian" : "Little Endian"),
+               major, minor, patch, (isActive ? "- active" : ""));
+    }
+    else
+    {
+        printf("ADIOS-BP Version %d %s - ADIOS v%c.%c.%c %s\n", BPVersion,
+               (isBigEndian ? "Big Endian" : "Little Endian"), major, minor,
+               patch, (isActive ? "- active" : ""));
+    }
 
     return true;
 }
@@ -975,7 +992,7 @@ int doList_vars(core::Engine *fp, core::IO *io)
                 if (longopt || dump)
                 {
                     fprintf(outf, "  attr   = ");
-                    if (entry.typeName == DataType::Compound)
+                    if (entry.typeName == DataType::Struct)
                     {
                         // not supported
                     }
@@ -998,7 +1015,7 @@ int doList_vars(core::Engine *fp, core::IO *io)
             }
             else
             {
-                if (entry.typeName == DataType::Compound)
+                if (entry.typeName == DataType::Struct)
                 {
                     // not supported
                 }
@@ -1215,7 +1232,8 @@ int printVariableInfo(core::Engine *fp, core::IO *io,
         if (longopt && !timestep)
         {
             fprintf(outf, " = ");
-            print_data(&variable->m_Value, 0, adiosvartype, false);
+            auto mm = variable->MinMax();
+            print_data(&mm.second, 0, adiosvartype, false);
         }
         fprintf(outf, "\n");
 
@@ -1903,7 +1921,7 @@ int readVar(core::Engine *fp, core::IO *io, core::Variable<T> *variable)
 
     // Absolute step is needed to access Shape of variable in a step
     // and also for StepSelection
-    size_t absstep = relative_to_absolute_step(variable, stepStart);
+    size_t absstep = relative_to_absolute_step(fp, variable, stepStart);
 
     // Get the shape of the variable for the starting step
     Dims shape;
@@ -2996,9 +3014,16 @@ void print_endline(void)
 }
 
 template <class T>
-size_t relative_to_absolute_step(core::Variable<T> *variable,
+size_t relative_to_absolute_step(core::Engine *fp, core::Variable<T> *variable,
                                  const size_t relstep)
 {
+    auto minBlocks = fp->MinBlocksInfo(*variable, relstep);
+
+    if (minBlocks)
+    {
+        return minBlocks->Step;
+    }
+
     const std::map<size_t, std::vector<size_t>> &indices =
         variable->m_AvailableStepBlockIndexOffsets;
     auto itStep = indices.begin();
@@ -3041,11 +3066,15 @@ Dims get_global_array_signature(core::Engine *fp, core::IO *io,
                 {
                     for (size_t k = 0; k < ndim; k++)
                     {
+                        size_t n =
+                            (minBlocks->WasLocalVar
+                                 ? reinterpret_cast<size_t>(minBlocks->Shape)
+                                 : minBlocks->Shape[k]);
                         if (firstStep)
                         {
-                            dims[k] = minBlocks->Shape[k];
+                            dims[k] = n;
                         }
-                        else if (dims[k] != minBlocks->Shape[k])
+                        else if (dims[k] != n)
                         {
                             dims[k] = 0;
                         }
@@ -3340,20 +3369,26 @@ void print_decomp(core::Engine *fp, core::IO *io, core::Variable<T> *variable)
 
                     for (size_t k = 0; k < ndim; k++)
                     {
-                        if (blocks[j].Count[k])
+                        size_t c =
+                            (minBlocksInfo->WasLocalVar
+                                 ? reinterpret_cast<size_t>(blocks[j].Count)
+                                 : blocks[j].Count[k]);
+
+                        if (c)
                         {
+                            size_t s =
+                                (minBlocksInfo->WasLocalVar
+                                     ? reinterpret_cast<size_t>(blocks[j].Start)
+                                     : blocks[j].Start[k]);
                             if (variable->m_ShapeID == ShapeID::GlobalArray)
                             {
-                                fprintf(outf, "%*zu:%*zu", ndigits_dims[k],
-                                        blocks[j].Start[k], ndigits_dims[k],
-                                        blocks[j].Start[k] +
-                                            blocks[j].Count[k] - 1);
+                                fprintf(outf, "%*zu:%*zu", ndigits_dims[k], s,
+                                        ndigits_dims[k], s + c - 1);
                             }
                             else
                             {
                                 // blockStart is empty vector for LocalArrays
-                                fprintf(outf, "0:%*zu", ndigits_dims[k],
-                                        blocks[j].Count[k] - 1);
+                                fprintf(outf, "0:%*zu", ndigits_dims[k], c - 1);
                             }
                         }
                         else
@@ -3387,10 +3422,20 @@ void print_decomp(core::Engine *fp, core::IO *io, core::Variable<T> *variable)
                     fprintf(outf, "\n");
                     if (dump)
                     {
-                        readVarBlock(
-                            fp, io, variable, RelStep, j,
-                            Dims(blocks[j].Count, blocks[j].Count + ndim),
-                            Dims(blocks[j].Start, blocks[j].Start + ndim));
+                        if (minBlocksInfo->WasLocalVar)
+                        {
+                            readVarBlock(
+                                fp, io, variable, RelStep, j,
+                                {reinterpret_cast<size_t>(blocks[j].Count)},
+                                {reinterpret_cast<size_t>(blocks[j].Start)});
+                        }
+                        else
+                        {
+                            readVarBlock(
+                                fp, io, variable, RelStep, j,
+                                Dims(blocks[j].Count, blocks[j].Count + ndim),
+                                Dims(blocks[j].Start, blocks[j].Start + ndim));
+                        }
                     }
                 }
             }

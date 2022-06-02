@@ -27,6 +27,7 @@ Funded by the `Exascale Computing Project (ECP) <https://www.exascaleproject.org
    components/components
    engines/virtual_engines
    engines/engines
+   operators/operators
    api_full/api_full
    api_high/api_high
 
@@ -34,7 +35,7 @@ Funded by the `Exascale Computing Project (ECP) <https://www.exascaleproject.org
    :caption: Advanced Topics
    
    advanced/aggregation
-   advanced/reduction
+   advanced/memory_management
    advanced/gpu_aware
    advanced/plugins
    

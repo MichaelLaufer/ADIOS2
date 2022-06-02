@@ -46,6 +46,9 @@ public:
         size_t ReadLength;
         char *DestinationAddr;
         void *Internal;
+        size_t ReqIndex;
+        size_t OffsetInBlock;
+        size_t BlockID;
     };
     void InstallMetaMetaData(MetaMetaInfoBlock &MMList);
     void InstallMetaData(void *MetadataBlock, size_t BlockLen,
@@ -58,8 +61,18 @@ public:
     bool QueueGetSingle(core::VariableBase &variable, void *DestData,
                         size_t Step);
 
-    std::vector<ReadRequest> GenerateReadRequests();
-    void FinalizeGets(std::vector<ReadRequest>);
+    /* generate read requests. return vector of requests AND the size of
+     * the largest allocation block necessary for reading.
+     * input flag: true allocates a temporary buffer for each read request
+     * unless the request can go directly to user memory.
+     * False will not allocate a temporary buffer
+     * (RR.DestinationAddress==nullptr) but may also assign the user memory
+     * pointer for direct read in
+     */
+    std::vector<ReadRequest> GenerateReadRequests(const bool doAllocTempBuffers,
+                                                  size_t *maxReadSize);
+    void FinalizeGet(const ReadRequest &, const bool freeAddr);
+    void FinalizeGets(std::vector<ReadRequest> &);
 
     MinVarInfo *AllRelativeStepsMinBlocksInfo(const VariableBase &var);
     MinVarInfo *AllStepsMinBlocksInfo(const VariableBase &var);
@@ -201,7 +214,6 @@ private:
         void *Data;
     };
     std::vector<BP5ArrayRequest> PendingRequests;
-    bool NeedWriter(BP5ArrayRequest Req, size_t i, size_t &NodeFirst);
     void *GetMetadataBase(BP5VarRec *VarRec, size_t Step,
                           size_t WriterRank) const;
     size_t CurTimestep = 0;

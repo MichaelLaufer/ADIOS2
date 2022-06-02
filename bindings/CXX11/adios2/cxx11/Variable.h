@@ -26,8 +26,6 @@ class Group;  // friend
 namespace core
 {
 
-class VariableBase;
-
 template <class T>
 class Variable; // private implementation
 
@@ -383,29 +381,24 @@ public:
     std::map<size_t, std::vector<typename Variable<T>::Info>>
     AllStepsBlocksInfoMap() const;
 
-    std::vector<typename Variable<T>::Info>
-    ToBlocksInfoMin(const MinVarInfo *coreVarInfo) const;
-
     using Span = adios2::detail::Span<T>;
 
 private:
-    Variable<T>(core::Variable<IOType> *variable);
     core::Variable<IOType> *m_Variable = nullptr;
+
+    std::vector<typename Variable<T>::Info>
+    ToBlocksInfoMin(const MinVarInfo *coreVarInfo) const;
+
+    Variable<T>(core::Variable<IOType> *variable);
 
     std::vector<std::vector<typename Variable<T>::Info>> DoAllStepsBlocksInfo();
     std::map<size_t, std::vector<typename Variable<T>::Info>>
     DoAllStepsBlocksInfoMap() const;
 };
 
-#define declare_template_instantiation(T)                                      \
-    extern template std::vector<typename Variable<T>::Info>                    \
-    Variable<T>::ToBlocksInfoMin(const MinVarInfo *coreVarInfo) const;
-ADIOS2_FOREACH_TYPE_1ARG(declare_template_instantiation)
-#undef declare_template_instantiation
-
 template <typename T>
 std::string ToString(const Variable<T> &variable);
 
 } // end namespace adios2
 
-#endif /* ADIOS2_BINDINGS_CXX11_CXX11_VARIABLE_H_ */
+#endif // ADIOS2_BINDINGS_CXX11_CXX11_VARIABLE_H_

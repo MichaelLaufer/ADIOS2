@@ -56,7 +56,7 @@ SstReader::SstReader(IO &io, const std::string &name, const Mode mode,
         adios2::DataType Type = (adios2::DataType)type;
         class SstReader::SstReader *Reader =
             reinterpret_cast<class SstReader::SstReader *>(reader);
-        if (Type == adios2::DataType::Compound)
+        if (Type == adios2::DataType::Struct)
         {
             return (void *)NULL;
         }
@@ -90,7 +90,7 @@ SstReader::SstReader(IO &io, const std::string &name, const Mode mode,
         }
         try
         {
-            if (Type == adios2::DataType::Compound)
+            if (Type == adios2::DataType::Struct)
             {
                 return;
             }
@@ -153,7 +153,7 @@ SstReader::SstReader(IO &io, const std::string &name, const Mode mode,
             }
         }
 
-        if (Type == adios2::DataType::Compound)
+        if (Type == adios2::DataType::Struct)
         {
             return (void *)NULL;
         }
@@ -204,7 +204,7 @@ SstReader::SstReader(IO &io, const std::string &name, const Mode mode,
                 }
             }
 
-            if (Type == adios2::DataType::Compound)
+            if (Type == adios2::DataType::Struct)
             {
                 return;
             }
@@ -640,7 +640,9 @@ ADIOS2_FOREACH_STDTYPE_1ARG(declare_gets)
 
 void SstReader::BP5PerformGets()
 {
-    auto ReadRequests = m_BP5Deserializer->GenerateReadRequests();
+    size_t maxReadSize;
+    auto ReadRequests =
+        m_BP5Deserializer->GenerateReadRequests(true, &maxReadSize);
     std::vector<void *> sstReadHandlers;
     for (const auto &Req : ReadRequests)
     {
@@ -692,7 +694,7 @@ void SstReader::PerformGets()
         {
             const DataType type = m_IO.InquireVariableType(name);
 
-            if (type == DataType::Compound)
+            if (type == DataType::Struct)
             {
             }
 #define declare_type(T)                                                        \
@@ -724,7 +726,7 @@ void SstReader::PerformGets()
         {
             const DataType type = m_IO.InquireVariableType(name);
 
-            if (type == DataType::Compound)
+            if (type == DataType::Struct)
             {
             }
 #define declare_type(T)                                                        \

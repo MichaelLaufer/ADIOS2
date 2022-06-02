@@ -2,7 +2,7 @@
  * Distributed under the OSI-approved Apache License, Version 2.0.  See
  * accompanying file Copyright.txt for details.
  *
- * SscWriterBase.h
+ * SscWriterGeneric.h
  *
  *  Created on: Mar 3, 2022
  *      Author: Jason Wang
@@ -39,9 +39,7 @@ public:
     void EndStep(const bool writerLocked) final;
     void Close(const int transportIndex) final;
 
-#define declare_type(T) void PutDeferred(Variable<T> &, const T *) final;
-    ADIOS2_FOREACH_STDTYPE_1ARG(declare_type)
-#undef declare_type
+    void PutDeferred(VariableBase &, const void *) final;
 
 private:
     MPI_Win m_MpiWin;

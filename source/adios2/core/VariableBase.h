@@ -2,7 +2,7 @@
  * Distributed under the OSI-approved Apache License, Version 2.0.  See
  * accompanying file Copyright.txt for details.
  *
- * VariableBase.h Base class for Variable and VariableCompound types. Contains
+ * VariableBase.h Base class for Variable and VariableStruct types. Contains
  * common elements.
  *
  *  Created on: Feb 20, 2017
@@ -36,7 +36,7 @@ namespace core
 class IO;
 class Engine;
 
-/** Base class for Variable<T> (primitives) and VariableCompound classes */
+/** Base class for Variable<T> (primitives) and VariableStruct classes */
 class VariableBase
 {
 
@@ -48,7 +48,7 @@ public:
     const DataType m_Type;
 
     /** Variable -> sizeof(T),
-     *  VariableCompound -> from constructor sizeof(struct) */
+     *  VariableStruct -> from constructor sizeof(struct) */
     const size_t m_ElementSize;
 #ifdef ADIOS2_HAVE_CUDA
     MemorySpace m_MemorySpace = MemorySpace::Detect;
@@ -215,7 +215,7 @@ public:
      */
     void CheckRandomAccessConflict(const std::string hint) const;
 
-    Dims GetShape(const size_t step = adios2::EngineCurrentStep);
+    Dims Shape(const size_t step = adios2::EngineCurrentStep) const;
 
     /**
      * Get info for attributes associated with this variable. Attribute name
@@ -239,6 +239,8 @@ protected:
      *  SetSelection.
      * @param hint extra debugging info for the exception */
     void CheckDimensionsCommon(const std::string hint) const;
+
+    void CheckRandomAccess(const size_t step, const std::string hint) const;
 };
 
 } // end namespace core
