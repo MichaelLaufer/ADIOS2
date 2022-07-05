@@ -57,6 +57,7 @@ set_target_properties(sst PROPERTIES
 #------------------------------------------------------------------------------#
 set(SST_CONFIG_OPTS
   LIBFABRIC
+  UCX
   FI_GNI
   CRAY_DRC
   NVStream
