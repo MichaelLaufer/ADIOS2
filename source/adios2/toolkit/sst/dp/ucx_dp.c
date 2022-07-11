@@ -102,7 +102,7 @@ static void init_fabric(struct fabric_state *fabric, struct _SstParams *Params,
     ucp_config_release(config);
     
     worker_params.field_mask  = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
-    worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
+    worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
     status = ucp_worker_create(fabric->ucp_context, &worker_params, &fabric->ucp_worker); 
     status = ucp_worker_get_address(fabric->ucp_worker, &fabric->local_addr, &fabric->local_addr_len);
 }
@@ -118,7 +118,8 @@ typedef struct fabric_state *FabricState;
 
 typedef struct _UcxCompletionHandle
 {
-    struct fid_mr *LocalMR;
+    //struct fid_mr *LocalMR;
+    ucs_status_ptr_t req;
     void *CPStream;
     void *Buffer;
     size_t Length;
@@ -129,7 +130,9 @@ typedef struct _UcxCompletionHandle
 typedef struct _UcxBufferHandle
 {
     uint8_t *Block;
-    uint64_t Key;
+    //uint64_t Key;
+    void* rkey;
+    size_t rkey_size;
 } * UcxBufferHandle;
 
 typedef struct _UcxBuffer
@@ -151,14 +154,8 @@ typedef struct _Ucx_RS_Stream
     int WriterCohortSize;
     CP_PeerCohort PeerCohort;
     struct _UcxWriterContactInfo *WriterContactInfo;
-    //fi_addr_t *WriterAddr;
+    ucp_ep_h *WriterEP;
 } * Ucx_RS_Stream;
-
-typedef struct _UcxPerTimestepInfo
-{
-    uint8_t *Block;
-    uint64_t Key;
-} * UcxPerTimestepInfo;
 
 typedef struct _TimestepEntry
 {
@@ -166,8 +163,10 @@ typedef struct _TimestepEntry
     struct _SstData *Data;
     struct _UcxBufferHandle *DP_TimestepInfo;
     struct _TimestepEntry *Next;
+    ucp_mem_h memh;
     //struct fid_mr *mr;
-    uint64_t Key;
+    void* rkey;
+    size_t rkey_size;
 } * TimestepList;
 
 typedef struct _Ucx_WSR_Stream
@@ -248,7 +247,6 @@ static DP_WS_Stream UcxInitWriter(CP_Services Svcs, void *CP_Stream,
     SMPI_Comm_rank(comm, &Stream->Rank);
 
     Stream->Fabric = calloc(1, sizeof(struct fabric_state));
-    Fabric = Stream->Fabric;
     init_fabric(Stream->Fabric, Params, Svcs, CP_Stream);
     Fabric = Stream->Fabric;
 
@@ -291,10 +289,8 @@ static DP_WSR_Stream UcxInitWriterPerReader(CP_Services Svcs,
     ContactInfo = calloc(1, sizeof(struct _UcxWriterContactInfo));
     ContactInfo->WS_Stream = WSR_Stream;
 
-    //ContactInfo->Length = Fabric->info->src_addrlen;
-    //ContactInfo->Address = malloc(ContactInfo->Length);
-    //fi_getname((fid_t)Fabric->signal, ContactInfo->Address,
-    //           &ContactInfo->Length);
+    ContactInfo->Length = Fabric->local_addr_len;
+    ContactInfo->Address = Fabric->local_addr;
 
     WSR_Stream->WriterContactInfo = ContactInfo;
     *WriterContactInfoPtr = ContactInfo;
@@ -315,8 +311,8 @@ static void UcxProvideWriterDataToReader(CP_Services Svcs,
 
     RS_Stream->PeerCohort = PeerCohort;
     RS_Stream->WriterCohortSize = writerCohortSize;
-    //RS_Stream->WriterAddr =
-    //    calloc(writerCohortSize, sizeof(*RS_Stream->WriterAddr));
+    RS_Stream->WriterEP =
+        calloc(writerCohortSize, sizeof(*RS_Stream->WriterEP));
     
     /*
      * make a copy of writer contact information (original will not be
@@ -328,8 +324,11 @@ static void UcxProvideWriterDataToReader(CP_Services Svcs,
     {
         RS_Stream->WriterContactInfo[i].WS_Stream =
             providedWriterInfo[i]->WS_Stream;
-        //fi_av_insert(Fabric->av, providedWriterInfo[i]->Address, 1,
-        //             &RS_Stream->WriterAddr[i], 0, NULL);
+        ucp_ep_params_t ep_params;
+        ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
+        ep_params.address = providedWriterInfo[i]->Address;
+        ucs_status_t ucs_status = ucp_ep_create(Fabric->ucp_worker, &ep_params, &RS_Stream->WriterEP[i]);
+
         Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
                       "Received contact info for WS_stream %p, WSR Rank %d\n",
                       RS_Stream->WriterContactInfo[i].WS_Stream, i);
@@ -380,6 +379,19 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
                   "Target of remote read on Writer Rank %d is %p\n", Rank,
                   Addr);
 
+    ucp_rkey_h rkey_p;
+    size_t rkey_len = Info->();
+    uint8_t rkey_buffer[rkey_len];
+
+    for (int i = 0; i < rkey_len; ++i) {
+        rkey_buffer[i] = Info->Key[i];
+    }
+    ucs_status = ucp_ep_rkey_unpack(RS_Stream->WriterEP[Rank], rkey_buffer, &rkey_p);
+    
+    ucp_request_param_t param;
+    param.op_attr_mask = 0;
+    ret->req = ucp_get_nbx(RS_Stream->WriterEP[Rank], Buffer, Length,// target_ptr, rkey_p, &param);
+    
     //do
     //{
     //    rc = fi_read(Fabric->signal, Buffer, Length, LocalDesc, SrcAddress,
@@ -413,8 +425,6 @@ static void UcxNotifyConnFailure(CP_Services Svcs, DP_RS_Stream Stream_v,
                   FailedPeerRank);
 }
 
-
-
 /*
  * UcxWaitForCompletion should return 1 if successful, but 0 if the reads
  * failed for some reason or were aborted by RdmaNotifyConnFailure()
@@ -426,7 +436,19 @@ static int UcxWaitForCompletion(CP_Services Svcs, void *Handle_v)
 
     Svcs->verbose(Stream->CP_Stream, DPTraceVerbose, "Rank %d, %s\n",
                   Stream->Rank, __func__);
-    // ML Need to add UCX progress to completion
+    ucs_status_t ucs_status;
+    if (UCS_PTR_IS_PTR(Handle->req)) {
+        do {
+          ucp_worker_progress(Stream->Fabric->ucp_worker);
+          ucs_status = ucp_request_check_status(Handle->req);
+        } while (ucs_status == UCS_INPROGRESS);
+
+        ucp_request_release(Handle->req);
+    } else if (UCS_PTR_STATUS(Handle->req) != UCS_OK) {
+            Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
+                  "UCX SST wait for completion failed, is not pointer");
+            return 0;
+        }
 }
 
 static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
@@ -444,22 +466,38 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
     Entry->Timestep = Timestep;
     Entry->DP_TimestepInfo = Info;
     
-    //fi_mr_reg(Fabric->domain, Data->block, Data->DataSize,
-    //          FI_WRITE | FI_REMOTE_READ, 0, 0, 0, &Entry->mr, Fabric->ctx);
-    //Entry->Key = fi_mr_key(Entry->mr);
+    ucp_mem_map_params_t mem_map_params;
+    void* rkey_buffer = NULL;
+    size_t rkey_size;
+    mem_map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                                UCP_MEM_MAP_PARAM_FIELD_LENGTH |
+                                UCP_MEM_MAP_PARAM_FIELD_FLAGS;
+    mem_map_params.address = Data->block;
+    mem_map_params.length = Data->DataSize;
+    mem_map_params.flags = UCP_MEM_MAP_ALLOCATE;
+    ucp_mem_map(Fabric->ucp_context, &mem_map_params, &Entry->memh);
+
+    ucp_mem_attr_t mem_attr;
+    mem_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS;
+    ucp_mem_query(Entry->memh, &mem_attr);
+    Data->block = mem_attr.address;
+
+    ucp_rkey_pack(Fabric->ucp_context, Entry->memh, &Entry->rkey, &Entry->rkey_size);
     pthread_mutex_lock(&ucx_ts_mutex);
     Entry->Next = Stream->Timesteps;
     Stream->Timesteps = Entry;
     // Probably doesn't need to be in the lock
     // |
     // ---------------------------------------------------------------------------------------------------
-    Info->Key = Entry->Key;
+    Info->rkey = Entry->rkey;
+    Info->rkey_size = Entry->rkey_size;
+    
     pthread_mutex_unlock(&ucx_ts_mutex);
     Info->Block = (uint8_t *)Data->block;
 
     Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
                   "Providing timestep data with block %p and access key %d\n",
-                  Info->Block, Info->Key);
+                  Info->Block, Info->rkey);
 
     *TimestepInfoPtr = Info;
 }
@@ -570,7 +608,8 @@ static FMStructDescRec UcxReaderContactStructs[] = {
 
 static FMField UcxBufferHandleList[] = {
     {"Block", "integer", sizeof(void *), FMOffset(UcxBufferHandle, Block)},
-    {"Key", "integer", sizeof(uint64_t), FMOffset(UcxBufferHandle, Key)},
+    {"rkey", "integer", sizeof(void *), FMOffset(UcxBufferHandle, rkey)},
+    {"rkey_size", "integer", sizeof(uint64_t), FMOffset(UcxBufferHandle, rkey_size)},
     {NULL, NULL, 0, 0}};
 
 static FMStructDescRec UcxBufferHandleStructs[] = {
