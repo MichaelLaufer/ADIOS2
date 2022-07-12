@@ -111,7 +111,7 @@ static void fini_fabric(struct fabric_state *fabric)
 {
     //ucp_worker_release_address(fabric->ucp_worker, fabric->local_addr);
     //ucp_worker_destroy(fabric->ucp_worker);
-    //ucp_cleanup(fabric->ucp_context);
+    ucp_cleanup(fabric->ucp_context);
 }
 
 typedef struct fabric_state *FabricState;
@@ -164,7 +164,6 @@ typedef struct _TimestepEntry
     struct _UcxBufferHandle *DP_TimestepInfo;
     struct _TimestepEntry *Next;
     ucp_mem_h memh;
-    //struct fid_mr *mr;
     void* rkey;
     size_t rkey_size;
 } * TimestepList;
@@ -353,7 +352,7 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
     {
         Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
                       "Block address is %p, with a key of %d\n", Info->Block,
-                      Info->Key);
+                      Info->rkey);
     }
     else
     {
@@ -370,45 +369,22 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
     ret->Length = Length;
     ret->Pending = 1;
 
-    //Added from old 
-    //SrcAddress = RS_Stream->WriterAddr[Rank];
-
     Addr = Info->Block + Offset;
 
-    Svcs->verbose(RS_Stream->CP_Stream,
-                  "Target of remote read on Writer Rank %d is %p\n", Rank,
-                  Addr);
+    Svcs->verbose( RS_Stream->CP_Stream, DPTraceVerbose,
+                "Remote read target is Rank %d (Offset = %zi, Length = %zi)\n",
+                 Rank, Offset, Length);
 
     ucp_rkey_h rkey_p;
-    size_t rkey_len = Info->();
-    uint8_t rkey_buffer[rkey_len];
-
-    for (int i = 0; i < rkey_len; ++i) {
-        rkey_buffer[i] = Info->Key[i];
-    }
-    ucs_status = ucp_ep_rkey_unpack(RS_Stream->WriterEP[Rank], rkey_buffer, &rkey_p);
+    ucp_ep_rkey_unpack(RS_Stream->WriterEP[Rank], Info->rkey, &rkey_p);
     
     ucp_request_param_t param;
     param.op_attr_mask = 0;
-    ret->req = ucp_get_nbx(RS_Stream->WriterEP[Rank], Buffer, Length,// target_ptr, rkey_p, &param);
+    ret->req = ucp_get_nbx(RS_Stream->WriterEP[Rank], Buffer, Length, (uint64_t)Addr, rkey_p, &param);
     
-    //do
-    //{
-    //    rc = fi_read(Fabric->signal, Buffer, Length, LocalDesc, SrcAddress,
-    //                 (uint64_t)Addr, Info->Key, ret);
-    //} while (rc == -EAGAIN);
-
-    //if (rc != 0)
-    //{
-    //    Svcs->verbose(RS_Stream->CP_Stream, "fi_read failed with code %d.\n",
-    //                  rc);
-    //    free(ret);
-    //    return NULL;
-    //}
-
-    Svcs->verbose(RS_Stream->CP_Stream,
-                  "Posted RDMA get for Writer Rank %d for handle %p\n", Rank,
-                  (void *)ret);
+    Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
+                 "Posted RDMA get for Writer Rank %d for handle %p\n",
+                  Rank, (void *)ret);
 
     return (ret);
 }
@@ -437,18 +413,21 @@ static int UcxWaitForCompletion(CP_Services Svcs, void *Handle_v)
     Svcs->verbose(Stream->CP_Stream, DPTraceVerbose, "Rank %d, %s\n",
                   Stream->Rank, __func__);
     ucs_status_t ucs_status;
-    if (UCS_PTR_IS_PTR(Handle->req)) {
+    if (UCS_PTR_IS_PTR(Handle->req)){
         do {
           ucp_worker_progress(Stream->Fabric->ucp_worker);
           ucs_status = ucp_request_check_status(Handle->req);
         } while (ucs_status == UCS_INPROGRESS);
 
         ucp_request_release(Handle->req);
-    } else if (UCS_PTR_STATUS(Handle->req) != UCS_OK) {
-            Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
-                  "UCX SST wait for completion failed, is not pointer");
-            return 0;
-        }
+        return 1;
+    } 
+    else if (UCS_PTR_STATUS(Handle->req) != UCS_OK) 
+    {
+        Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
+        "UCX SST wait for completion failed, is not pointer");
+        return 0;
+    }
 }
 
 static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
@@ -581,7 +560,7 @@ static void UcxDestroyWriterPerReader(CP_Services Svcs,
             break;
         }
     }
-    //fi_close((struct fid *)WSR_Stream->rrmr);
+
     WS_Stream->Readers = realloc(
         WS_Stream->Readers, sizeof(*WSR_Stream) * (WS_Stream->ReaderCount - 1));
     WS_Stream->ReaderCount--;
@@ -674,6 +653,7 @@ static int UcxGetPriority(CP_Services Svcs, void *CP_Stream,
                            struct _SstParams *Params)
 {
     /* The Ucx DP priority 10 */
+    //return 0;
     return 11;
 }
 
