@@ -446,8 +446,6 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
     Entry->DP_TimestepInfo = Info;
     
     ucp_mem_map_params_t mem_map_params;
-    void* rkey_buffer = NULL;
-    size_t rkey_size;
     mem_map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
                                 UCP_MEM_MAP_PARAM_FIELD_LENGTH |
                                 UCP_MEM_MAP_PARAM_FIELD_FLAGS;

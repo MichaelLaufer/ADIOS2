@@ -862,11 +862,12 @@ WS_ReaderInfo WriterParticipateInReaderOpen(SstStream Stream)
     CP_WSR_Stream->ReaderStatus = Opening;
     if (ReturnData->SpecPreload == SpecPreloadOn)
     {
+        //
 
-        CP_WSR_Stream->PreloadMode = SstPreloadSpeculative;
-        CP_WSR_Stream->PreloadModeActiveTimestep = 0;
-        CP_verbose(Stream, PerStepVerbose,
-                   "Setting SpeculativePreload ON for new reader\n");
+        //CP_WSR_Stream->PreloadMode = SstPreloadSpeculative;
+        //CP_WSR_Stream->PreloadModeActiveTimestep = 0;
+        //CP_verbose(Stream, PerStepVerbose,
+        //           "Setting SpeculativePreload ON for new reader\n");
     }
 
     int MySuccess = initWSReader(CP_WSR_Stream, ReturnData->ReaderCohortSize,
