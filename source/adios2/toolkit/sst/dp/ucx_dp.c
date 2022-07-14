@@ -95,16 +95,40 @@ static void init_fabric(struct fabric_state *fabric, struct _SstParams *Params,
 
     /* UCP initialization */
     status = ucp_config_read(NULL, NULL, &config);
+    if (status != UCS_OK) {
+        Svcs->verbose(CP_Stream, DPCriticalVerbose,
+                  "UCX Error during ucp_config_read() with: %s.\n",
+                  ucs_status_string(status));        
+      return;
+    }
     ucp_params.field_mask   = UCP_PARAM_FIELD_FEATURES;
     ucp_params.features     = UCP_FEATURE_RMA;
     
     status = ucp_init(&ucp_params, config, &fabric->ucp_context);
+    if (status != UCS_OK) {
+        Svcs->verbose(CP_Stream, DPCriticalVerbose,
+                  "UCX Error during ucp_init() with: %s.\n",
+                  ucs_status_string(status));        
+        return;
+    }
     ucp_config_release(config);
     
     worker_params.field_mask  = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
     worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
-    status = ucp_worker_create(fabric->ucp_context, &worker_params, &fabric->ucp_worker); 
+    status = ucp_worker_create(fabric->ucp_context, &worker_params, &fabric->ucp_worker);
+    if (status != UCS_OK) {
+        Svcs->verbose(CP_Stream, DPCriticalVerbose,
+                  "UCX Error during ucp_worker_create() with: %s.\n",
+                  ucs_status_string(status));        
+        return;
+    }
     status = ucp_worker_get_address(fabric->ucp_worker, &fabric->local_addr, &fabric->local_addr_len);
+    if (status != UCS_OK) {
+        Svcs->verbose(CP_Stream, DPCriticalVerbose,
+                  "UCX Error during ucp_worker_get_address() with: %s.\n",
+                  ucs_status_string(status));        
+        return;
+    }
 }
 
 static void fini_fabric(struct fabric_state *fabric)
@@ -326,8 +350,13 @@ static void UcxProvideWriterDataToReader(CP_Services Svcs,
         ucp_ep_params_t ep_params;
         ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
         ep_params.address = providedWriterInfo[i]->Address;
-        ucs_status_t ucs_status = ucp_ep_create(Fabric->ucp_worker, &ep_params, &RS_Stream->WriterEP[i]);
-
+        ucs_status_t status = ucp_ep_create(Fabric->ucp_worker, &ep_params, &RS_Stream->WriterEP[i]);
+        if (status != UCS_OK) {
+            Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+                    "UCX Error during ucp_worker_get_address() with: %s.\n",
+                    ucs_status_string(status));        
+            return;
+        }
         Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
                       "Received contact info for WS_stream %p, WSR Rank %d\n",
                       RS_Stream->WriterContactInfo[i].WS_Stream, i);
@@ -376,12 +405,22 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
                  Rank, Offset, Length);
 
     ucp_rkey_h rkey_p;
-    ucp_ep_rkey_unpack(RS_Stream->WriterEP[Rank], Info->rkey, &rkey_p);
-    
+    ucs_status_t status = ucp_ep_rkey_unpack(RS_Stream->WriterEP[Rank], Info->rkey, &rkey_p);
+    if (status != UCS_OK) {
+        Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+                "UCX Error during ucp_ep_rkey_unpack() with: %s.\n",
+                ucs_status_string(status));        
+        return ret;
+    }    
     ucp_request_param_t param;
     param.op_attr_mask = 0;
     ret->req = ucp_get_nbx(RS_Stream->WriterEP[Rank], Buffer, Length, (uint64_t)Addr, rkey_p, &param);
-    
+    if (status != UCS_OK) {
+    Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+            "UCX Error during ucp_get_nbx() with: %s.\n",
+            ucs_status_string(status));        
+    return ret;
+    }    
     Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
                  "Posted RDMA get for Writer Rank %d for handle %p\n",
                   Rank, (void *)ret);
@@ -412,22 +451,23 @@ static int UcxWaitForCompletion(CP_Services Svcs, void *Handle_v)
 
     Svcs->verbose(Stream->CP_Stream, DPTraceVerbose, "Rank %d, %s\n",
                   Stream->Rank, __func__);
-    ucs_status_t ucs_status;
+    ucs_status_t status;
     if (UCS_PTR_IS_PTR(Handle->req)){
         do {
           ucp_worker_progress(Stream->Fabric->ucp_worker);
-          ucs_status = ucp_request_check_status(Handle->req);
-        } while (ucs_status == UCS_INPROGRESS);
+          status = ucp_request_check_status(Handle->req);
+        } while (status == UCS_INPROGRESS);
 
         ucp_request_release(Handle->req);
         return 1;
-    } 
-    else if (UCS_PTR_STATUS(Handle->req) != UCS_OK) 
-    {
+    } else if (UCS_PTR_STATUS(Handle->req) != UCS_OK) {
         Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
-        "UCX SST wait for completion failed, is not pointer");
-        return 0;
+        "RPC failed, not a pointer");
+    } else {
+        Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
+        "RPC failed");
     }
+    return 0;
 }
 
 static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
@@ -439,6 +479,7 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
     TimestepList Entry = malloc(sizeof(struct _TimestepEntry));
     UcxBufferHandle Info = malloc(sizeof(struct _UcxBufferHandle));
     FabricState Fabric = Stream->Fabric;
+    ucs_status_t status;
 
     Entry->Data = malloc(sizeof(*Data));
     memcpy(Entry->Data, Data, sizeof(*Data));
@@ -450,16 +491,36 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
                                 UCP_MEM_MAP_PARAM_FIELD_LENGTH |
                                 UCP_MEM_MAP_PARAM_FIELD_FLAGS;
     mem_map_params.address = Data->block;
+    //mem_map_params.address = NULL;
     mem_map_params.length = Data->DataSize;
     mem_map_params.flags = UCP_MEM_MAP_ALLOCATE;
-    ucp_mem_map(Fabric->ucp_context, &mem_map_params, &Entry->memh);
+    status = ucp_mem_map(Fabric->ucp_context, &mem_map_params, &Entry->memh);
+    if (status != UCS_OK) {
+        Svcs->verbose(Stream->CP_Stream, DPCriticalVerbose,
+                  "UCX Error during ucp_mem_map() with: %s. while providing timestep data with block %p and access key %d.\n",
+                  ucs_status_string(status), Info->Block, Info->rkey);        
+      return;
+    }
+
 
     ucp_mem_attr_t mem_attr;
     mem_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS;
-    ucp_mem_query(Entry->memh, &mem_attr);
+    status = ucp_mem_query(Entry->memh, &mem_attr);
+    if (status != UCS_OK) {
+        Svcs->verbose(Stream->CP_Stream, DPCriticalVerbose,
+                  "UCX Error during ucp_mem_query() with: %s. while providing timestep data with block %p and access key %d.\n",
+                  ucs_status_string(status), Info->Block, Info->rkey);        
+      return;
+    }
     Data->block = mem_attr.address;
 
-    ucp_rkey_pack(Fabric->ucp_context, Entry->memh, &Entry->rkey, &Entry->rkey_size);
+    status = ucp_rkey_pack(Fabric->ucp_context, Entry->memh, &Entry->rkey, &Entry->rkey_size);
+    if (status != UCS_OK) {
+        Svcs->verbose(Stream->CP_Stream, DPCriticalVerbose,
+                  "UCX Error during ucp_rkey_pack() with: %s. while providing timestep data with block %p and access key %d.\n",
+                  ucs_status_string(status), Info->Block, Info->rkey);        
+      return;
+    }
     pthread_mutex_lock(&ucx_ts_mutex);
     Entry->Next = Stream->Timesteps;
     Stream->Timesteps = Entry;
