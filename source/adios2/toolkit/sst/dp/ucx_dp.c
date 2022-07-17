@@ -353,7 +353,7 @@ static void UcxProvideWriterDataToReader(CP_Services Svcs,
         ucs_status_t status = ucp_ep_create(Fabric->ucp_worker, &ep_params, &RS_Stream->WriterEP[i]);
         if (status != UCS_OK) {
             Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
-                    "UCX Error during ucp_worker_get_address() with: %s.\n",
+                    "UCX Error during ucp_ep_create() with: %s.\n",
                     ucs_status_string(status));        
             return;
         }
@@ -368,14 +368,21 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
                                   size_t Length, void *Buffer,
                                   void *DP_TimestepInfo)
 {
-    UcxCompletionHandle ret = {0};
     Ucx_RS_Stream RS_Stream = (Ucx_RS_Stream)Stream_v;
     UcxBufferHandle Info = (UcxBufferHandle)DP_TimestepInfo;
     uint8_t *Addr;
+    UcxCompletionHandle ret = malloc(sizeof(struct _UcxCompletionHandle));
 
     Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
                   "Performing remote read of Writer Rank %d at step %d\n", Rank,
                   Timestep);
+
+    if (!ret)
+    {
+        Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+                      "Failed to allocate memory for UcxCompletionHandle\n");
+        return (NULL);
+    }
 
     if (Info)
     {
@@ -391,18 +398,19 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
         return (NULL);
     }
 
-
     ret->CPStream = RS_Stream;
     ret->Buffer = Buffer;
     ret->Rank = Rank;
     ret->Length = Length;
     ret->Pending = 1;
-
+    Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+                      "heeyy %s   1 \n", __func__ );
     Addr = Info->Block + Offset;
-
+    Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+                      "heeyy %s   2 \n", __func__ );
     Svcs->verbose( RS_Stream->CP_Stream, DPTraceVerbose,
-                "Remote read target is Rank %d (Offset = %zi, Length = %zi)\n",
-                 Rank, Offset, Length);
+                "Remote read target is Rank %d, EP = %p (Offset = %zi, Length = %zi)\n",
+                 Rank, RS_Stream->WriterEP[Rank], Offset, Length);
 
     ucp_rkey_h rkey_p;
     ucs_status_t status = ucp_ep_rkey_unpack(RS_Stream->WriterEP[Rank], Info->rkey, &rkey_p);
@@ -480,6 +488,9 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
     UcxBufferHandle Info = malloc(sizeof(struct _UcxBufferHandle));
     FabricState Fabric = Stream->Fabric;
     ucs_status_t status;
+    ucp_worker_h ucp_worker;
+    ucp_address_t* ucp_address;
+    size_t address_length = 0;
 
     Entry->Data = malloc(sizeof(*Data));
     memcpy(Entry->Data, Data, sizeof(*Data));
@@ -493,7 +504,7 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
     mem_map_params.address = Data->block;
     //mem_map_params.address = NULL;
     mem_map_params.length = Data->DataSize;
-    mem_map_params.flags = UCP_MEM_MAP_ALLOCATE;
+    mem_map_params.flags = 0;
     status = ucp_mem_map(Fabric->ucp_context, &mem_map_params, &Entry->memh);
     if (status != UCS_OK) {
         Svcs->verbose(Stream->CP_Stream, DPCriticalVerbose,
@@ -501,7 +512,6 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
                   ucs_status_string(status), Info->Block, Info->rkey);        
       return;
     }
-
 
     ucp_mem_attr_t mem_attr;
     mem_attr.field_mask = UCP_MEM_ATTR_FIELD_ADDRESS;
@@ -529,7 +539,9 @@ static void UcxProvideTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
     // ---------------------------------------------------------------------------------------------------
     Info->rkey = Entry->rkey;
     Info->rkey_size = Entry->rkey_size;
-    
+    Svcs->verbose(Stream->CP_Stream, DPCriticalVerbose,
+                  "UCX Provide time step nfo: %s. while providing timestep data with block %p and access key %d.\n",
+                  ucs_status_string(status), Info->Block, Info->rkey);     
     pthread_mutex_unlock(&ucx_ts_mutex);
     Info->Block = (uint8_t *)Data->block;
 
@@ -634,6 +646,33 @@ static void UcxDestroyWriterPerReader(CP_Services Svcs,
     free(WSR_Stream);
 }
 
+/*
+// RDMA -- delete later
+static FMField RdmaReaderContactList[] = {
+    {"reader_ID", "integer", sizeof(void *),
+     FMOffset(RdmaReaderContactInfo, RS_Stream)},
+    {"Length", "integer", sizeof(int), FMOffset(RdmaReaderContactInfo, Length)},
+    {"Address", "integer[Length]", sizeof(char),
+     FMOffset(RdmaReaderContactInfo, Address)},
+    {NULL, NULL, 0, 0}};
+
+static FMStructDescRec RdmaReaderContactStructs[] = {
+    {"RdmaReaderContactInfo", RdmaReaderContactList,
+     sizeof(struct _RdmaReaderContactInfo), NULL},
+    {NULL, NULL, 0, NULL}};
+
+static FMField RdmaBufferHandleList[] = {
+    {"Block", "integer", sizeof(void *), FMOffset(RdmaBufferHandle, Block)},
+    {"Key", "integer", sizeof(uint64_t), FMOffset(RdmaBufferHandle, Key)},
+    {NULL, NULL, 0, 0}};
+
+static FMStructDescRec RdmaBufferHandleStructs[] = {
+    {"RdmaBufferHandle", RdmaBufferHandleList, sizeof(struct _RdmaBufferHandle),
+     NULL},
+    {NULL, NULL, 0, NULL}};
+
+*/
+
 static FMField UcxReaderContactList[] = {
     {"reader_ID", "integer", sizeof(void *),
      FMOffset(UcxReaderContactInfo, RS_Stream)},
@@ -646,8 +685,8 @@ static FMStructDescRec UcxReaderContactStructs[] = {
 
 static FMField UcxBufferHandleList[] = {
     {"Block", "integer", sizeof(void *), FMOffset(UcxBufferHandle, Block)},
-    {"rkey", "integer", sizeof(void *), FMOffset(UcxBufferHandle, rkey)},
     {"rkey_size", "integer", sizeof(uint64_t), FMOffset(UcxBufferHandle, rkey_size)},
+    {"rkey", "integer[rkey_size]", sizeof(char), FMOffset(UcxBufferHandle, rkey)},
     {NULL, NULL, 0, 0}};
 
 static FMStructDescRec UcxBufferHandleStructs[] = {
@@ -691,7 +730,27 @@ static void UcxDestroyWriter(CP_Services Svcs, DP_WS_Stream WS_Stream_v)
     free(WS_Stream->Fabric);
     free(WS_Stream);
 }
+/* delete later
 
+static FMField RdmaWriterContactList[] = {
+    {"writer_ID", "integer", sizeof(void *),
+     FMOffset(RdmaWriterContactInfo, WS_Stream)},
+    {"Length", "integer", sizeof(int), FMOffset(RdmaWriterContactInfo, Length)},
+    {"Address", "integer[Length]", sizeof(char),
+     FMOffset(RdmaWriterContactInfo, Address)},
+#ifdef SST_HAVE_CRAY_DRC
+    {"Credential", "integer", sizeof(int),
+     FMOffset(RdmaWriterContactInfo, Credential)},
+#endif 
+    {NULL, NULL, 0, 0}};
+
+static FMStructDescRec RdmaWriterContactStructs[] = {
+    {"RdmaWriterContactInfo", RdmaWriterContactList,
+     sizeof(struct _RdmaWriterContactInfo), NULL},
+    {NULL, NULL, 0, NULL}};
+
+
+*/
 static FMField UcxWriterContactList[] = {
     {"writer_ID", "integer", sizeof(void *),
      FMOffset(UcxWriterContactInfo, WS_Stream)},
