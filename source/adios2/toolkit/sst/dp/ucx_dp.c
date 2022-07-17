@@ -685,8 +685,8 @@ static FMStructDescRec UcxReaderContactStructs[] = {
 
 static FMField UcxBufferHandleList[] = {
     {"Block", "integer", sizeof(void *), FMOffset(UcxBufferHandle, Block)},
-    {"rkey", "integer", sizeof(void *), FMOffset(UcxBufferHandle, rkey)},
     {"rkey_size", "integer", sizeof(uint64_t), FMOffset(UcxBufferHandle, rkey_size)},
+    {"rkey", "integer[rkey_size]", sizeof(char), FMOffset(UcxBufferHandle, rkey)},
     {NULL, NULL, 0, 0}};
 
 static FMStructDescRec UcxBufferHandleStructs[] = {
