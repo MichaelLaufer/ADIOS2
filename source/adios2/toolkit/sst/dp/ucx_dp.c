@@ -395,7 +395,7 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
         Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
                       "Timestep info is null\n");
         free(ret);
-        return (NULL);
+        return NULL;
     }
 
     ret->CPStream = RS_Stream;
@@ -417,18 +417,27 @@ static void *UcxReadRemoteMemory(CP_Services Svcs, DP_RS_Stream Stream_v,
     if (status != UCS_OK) {
         Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
                 "UCX Error during ucp_ep_rkey_unpack() with: %s.\n",
-                ucs_status_string(status));        
-        return ret;
+                ucs_status_string(status)); 
+        free(ret);
+        return NULL;
     }    
     ucp_request_param_t param;
     param.op_attr_mask = 0;
     ret->req = ucp_get_nbx(RS_Stream->WriterEP[Rank], Buffer, Length, (uint64_t)Addr, rkey_p, &param);
-    if (status != UCS_OK) {
-    Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+    status = UCS_PTR_STATUS(ret->req);
+    if (status != UCS_OK && status != UCS_INPROGRESS) {
+        Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
             "UCX Error during ucp_get_nbx() with: %s.\n",
-            ucs_status_string(status));        
-    return ret;
-    }    
+            ucs_status_string(status));
+        free(ret);
+        return NULL;
+    }
+
+    if (status == UCS_OK) {
+        Svcs->verbose(RS_Stream->CP_Stream, DPCriticalVerbose,
+            "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY RDMA get succesfull!!: %s.\n",
+            ucs_status_string(status));
+    }
     Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
                  "Posted RDMA get for Writer Rank %d for handle %p\n",
                   Rank, (void *)ret);
@@ -457,16 +466,21 @@ static int UcxWaitForCompletion(CP_Services Svcs, void *Handle_v)
     UcxCompletionHandle Handle = (UcxCompletionHandle)Handle_v;
     Ucx_RS_Stream Stream = Handle->CPStream;
 
-    Svcs->verbose(Stream->CP_Stream, DPTraceVerbose, "Rank %d, %s\n",
+    Svcs->verbose(Stream->CP_Stream, DPTraceVerbose, "xxxxxxxxxxxxxxxxxxx Rank %d, %s\n",
                   Stream->Rank, __func__);
     ucs_status_t status;
     if (UCS_PTR_IS_PTR(Handle->req)){
         do {
+                Svcs->verbose(Stream->CP_Stream, DPTraceVerbose, "xxxxxxxxxxxxxxxxxxx Rank %d, %s while loooooooop\n",
+                  Stream->Rank, __func__);
           ucp_worker_progress(Stream->Fabric->ucp_worker);
           status = ucp_request_check_status(Handle->req);
         } while (status == UCS_INPROGRESS);
 
-        ucp_request_release(Handle->req);
+
+            // Todo check if the status is Okay here
+            ucp_request_free(Handle->req);
+            free(Handle);
         return 1;
     } else if (UCS_PTR_STATUS(Handle->req) != UCS_OK) {
         Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
@@ -475,6 +489,8 @@ static int UcxWaitForCompletion(CP_Services Svcs, void *Handle_v)
         Svcs->verbose(Stream->CP_Stream, DPTraceVerbose,
         "RPC failed");
     }
+                    Svcs->verbose(Stream->CP_Stream, DPTraceVerbose, "xxxxxxxxxxxxxxxxxxx Rank %d, %s faileddddd?!?!?\n",
+                  Stream->Rank, __func__);
     return 0;
 }
 
@@ -600,6 +616,7 @@ static void UcxReleaseTimestep(CP_Services Svcs, DP_WS_Stream Stream_v,
 static void UcxDestroyReader(CP_Services Svcs, DP_RS_Stream RS_Stream_v)
 {
     Ucx_RS_Stream RS_Stream = (Ucx_RS_Stream)RS_Stream_v;
+    Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose, "xxxxxxxxxxxxxxxxxxxxxxxx Rank %d, %s\n", RS_Stream->Rank, __func__);
 
     Svcs->verbose(RS_Stream->CP_Stream, DPTraceVerbose,
                   "Tearing down RDMA state on reader.\n");
@@ -620,6 +637,7 @@ static void UcxDestroyWriterPerReader(CP_Services Svcs,
     memcpy(&WSR_Stream, &WSR_Stream_v, sizeof(Ucx_WSR_Stream));
     Ucx_WS_Stream WS_Stream = WSR_Stream->WS_Stream;
     UcxWriterContactInfo WriterContactInfo = {0};
+    Svcs->verbose(WS_Stream->CP_Stream, DPTraceVerbose, "xxxxxxxxxxxxxxxxxxxxxxxx Rank %d, %s\n", WS_Stream->Rank, __func__);
 
     pthread_mutex_lock(&ucx_wsr_mutex);
     for (int i = 0; i < WS_Stream->ReaderCount; i++)
